@@ -1,0 +1,354 @@
+---
+title: "miRNA-microbiome_integration_01052017"
+author: "Swapna Mahurkar-Joshi"
+date: "January 5, 2017"
+output: html_document
+---
+
+#librraries
+```{r}
+# source("http://bioconductor.org/biocLite.R")
+# biocLite("digest")
+
+```
+
+# Reading miRNA data and identifying common samples
+
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/") 
+# read OTU table
+header1<-scan("merged_otu_table.txt", nlines = 2, what = character())[3:88]
+genus=read.table("merged_otu_table.txt", sep="\t", row.names = 1)	
+names(genus)<-header1
+genus1 = as.matrix(genus[,-dim(genus)[2]])
+genus2 = scale(genus1, center=F, scale=colSums(genus1)) ## sacle it so they are relative abundances and not counts
+genus2 = as.data.frame(t(genus2))
+save(genus2, file="genus2.rda")
+taxa.names = genus$ConsensusLineage
+
+save(genus1, file="genus1.rda")
+save(genus, file="genus.rda")
+
+d.species = otu2taxonomy(genus2,level=7,taxa=taxa.names)
+dim(d.species)
+d.genus = otu2taxonomy(genus2,level=6,taxa=taxa.names)
+dim(d.genus)
+d.family = otu2taxonomy(genus2,level=5,taxa=taxa.names)
+dim(d.family)
+d.order = otu2taxonomy(genus2,level=4,taxa=taxa.names)
+dim(d.order)
+d.class = otu2taxonomy(genus2,level=3,taxa=taxa.names)
+dim(d.class)
+d.phylum = otu2taxonomy(genus2,level=2,taxa=taxa.names)
+dim(d.phylum)
+```
+Filter the OTUs
+#Filter OTUs present in <5% samples
+#Filter OTUs with minimum abundance 0.0001
+```{r}
+dim(d.species)
+dt.species<-as.data.frame(t(d.species))
+dt.species1<- as.matrix(round(dt.species,5))
+mat <- ifelse(dt.species1<0.0001,0,dt.species1)
+mat1<- as.data.frame(mat)
+mat1$sum0 <- NA
+for (i in 1: dim(mat1)[1])
+  {mat1[i,86] <- sum(mat1[i,-86]==0)
+  }
+
+dt.f.sp <- subset(mat1, mat1$sum0<17)
+dt.f.sp$sum0 <- NULL
+microbMat<-t(dt.f.sp)
+save(microbMat, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/microbMat.Rda")
+```
+Read in miRNA data
+```{r}
+load("C:/Users/swapnajoshi/Documents/UCLA_research/miRNAtissueSerumIbs/nanostring_data/Results/biopsy_miR/norm.data4.rda"); dim(norm.data4)
+mirna = scale(norm.data4, center=F, scale=colSums(norm.data4)); dim(mirna) ## scale it so they are relative abundances and not counts
+
+mirna1<- as.matrix(round(mirna,5))
+mirna_mat <- ifelse(mirna1<0.0001,0,mirna1)
+mirna_mat1<- as.data.frame(mirna_mat)
+mirna_mat1$sum0 <- NA
+for (i in 1: dim(mirna_mat1)[1])
+  {mirna_mat1[i,45] <- sum(sum(as.matrix(mirna_mat1[i,-45])==0))
+  }
+
+mirna.f.sp <- subset(mirna_mat1, mirna_mat1$sum0<9)# 5% of 44 is ~9
+dim(mirna.f.sp)
+mirna.f.sp$sum0 <- NULL
+mirnaMat<-mirna.f.sp
+colnames(mirnaMat) <- substr(colnames(mirnaMat),1,5)
+save(mirnaMat, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/mirnaMat.Rda")
+```
+
+```{r}
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/mirnaMat.Rda")
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/microbMat.Rda")
+# row.names(microbMat)[1:4] <- paste("Biopsy.", substr(row.names(microbMat)[1:4],1,5), sep = "")
+microbMat1<-t(microbMat)
+# colnames(microbMat1) <- substr(colnames(microbMat1),8,12)
+
+mirnaMat1<- t(mirnaMat)
+microbMat2<-microbMat1[,colnames(microbMat1)%in%colnames(mirnaMat)]; dim(microbMat2)
+mirna1<-mirnaMat[row.names(mirnaMat1)%in%colnames(microbMat2),]; dim(mirna1)
+microbMat2<-microbMat2[,match(colnames(microbMat2),colnames(mirna1))]; dim(microbMat2)
+
+miRNAMicrobiomeDFlist <- list(as.data.frame(t(mirna1)),as.data.frame(t(microbMat2)))
+dat.all <- cbind(t(mirna1),microbMat2)
+save(miRNAMicrobiomeDFlist, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/miRNAMicrobiomeDFlist.rda")
+
+clinicalData <- data.frame(sample_data(phy))
+map.mirna<-clinicalData[row.names(clinicalData)%in%row.names(dat.all),]; dim(map.mirna)
+
+map.mirna<-map.mirna[row.names(dat.all),]
+match(row.names(dat.all),row.names(map.mirna))
+data3<-cbind(dat.all, map.mirna)
+colnames(data3)<-gsub(" ","",colnames(data3))
+colnames(data3)<-gsub(";","",colnames(data3))
+colnames(data3)<-gsub("-","_",colnames(data3))
+colnames(data3)<-gsub("\\|","",colnames(data3))
+colnames1<-colnames(data3)
+
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/miRNA_microbiome/biopsyMicrobiome/analysis_replication_plots_4242017")
+
+for(x in 1:17) for(y in 18:68) {
+  plotAllScatter(data3)
+}
+library(ggplot2)
+
+data3.ibs <- as.data.frame(subset(data3, data3$Group==2))
+
+P<-ggplot(data3.ibs, aes(data3.ibs[,71],data3.ibs[,156])) + geom_point(size=2) 
+q<-P+geom_point(aes(color=as.factor(data3.ibs$unWeiHieComplClu)))
+#+ ylim(0,0.025) + xlab("Parabacteroidess__distasonis") + ylab("hsa_miR_200a_3p0") + geom_smooth(aes(data3.ibs[,71],data3.ibs[,156],colour=as.factor(data3.ibs$unWeiHieComplClu)), method=lm, se=FALSE)
+q
+
+ggsave(q, file =  "distasonis_miR200a_BH.png")
+```
+#miRNA microbiome correlation IBS and HC separaetly
+```{r}
+# IBS patietns matrices
+row.names(mirna1) <- gsub("-","_",row.names(mirna1))
+# row.names(mirna1) <- gsub("\\| *","",row.names(mirna1))
+# 
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmiRNAproject/data/TechnicallyCorrectData/biopsy/phenoDat1.rda")
+
+phenoDat1 <- data.frame(sample_data(phy))
+
+# row.names(phenoDat1) <- substr(row.names(phenoDat1),1,5)
+phenoDat1.ibs <- subset(phenoDat1, phenoDat1$Group!="1")
+phenoDat1.hc <- subset(phenoDat1, phenoDat1$Group=="1")
+
+microbMat2.ibs <- microbMat2[, colnames(microbMat2)%in%row.names(phenoDat1.ibs)]; dim(microbMat2.ibs)
+mirna1.ibs <- mirna1[, colnames(mirna1)%in%row.names(phenoDat1.ibs)];dim(mirna1.ibs)
+mirna1.ibs <- mirna1.ibs[,colnames(microbMat2.ibs)]
+match(colnames(microbMat2.ibs), colnames(mirna1.ibs))
+microbMat2.hc <- microbMat2[, colnames(microbMat2)%in%row.names(phenoDat1.hc)]; dim(microbMat2.hc)
+mirna1.hc <- mirna1[, colnames(mirna1)%in%row.names(phenoDat1.hc)]; dim(mirna1.hc)
+
+library(DiffCorr)
+microb.ibs.clu <- cluster.molecule(microbMat2.ibs, method = "pearson", linkage = "average", absolute = FALSE)
+mirna.ibs.clu <- cluster.molecule(mirna1.ibs, method = "pearson", linkage = "average", absolute = FALSE)
+
+microb.hc.clu <- cluster.molecule(microbMat2.hc, method = "pearson", linkage = "average", absolute = FALSE)
+mirna.hc.clu <- cluster.molecule(mirna1.hc, method = "pearson", linkage = "average", absolute = FALSE)
+
+data1<-cbind(t(mirna1.ibs),t(microbMat2.ibs))
+
+library(Hmisc)
+cor1 <- rcorr(as.matrix(data1), type="spearman")
+cor1$r[1:5,1:5]
+cor1$P[1:5,1:5]
+corMat<-round(cor1$r, 2)
+adj.p.mat <- apply(cor1$P,2,p.adjust)
+
+# sub1<-function(x)(subset(x, x[i]>=0.5))
+highCor<-matrix(NA, nrow=179, ncol=179)
+row.names(highCor)<-row.names(adj.p.mat)
+colnames(highCor)<-colnames(adj.p.mat)
+is.na(adj.p.mat) <- NA
+
+# for ( i in 1:dim(adj.p.mat)[1])
+#   for ( j in 1:dim(adj.p.mat)[2])
+#   {
+#     if (adj.p.mat[i,j] <= 0.05) {  
+#     highCor[i,j] <- 1 } 
+    # else if(adj.p.mat[i,j] > 0.05) {
+    # highCor[i,j] <- 0 } 
+    # else if (adj.p.mat[i,j] == 'NA') {
+    # highCor[i,j] <- 0 } 
+    # }
+
+highCor <- ifelse(adj.p.mat <= 0.1, 1,0)
+
+mirnaMicroCor<-highCor[1:150,151:179]
+mirnaMicroCor<-as.data.frame(mirnaMicroCor)
+mirnaMicroCor$sum1<-apply(mirnaMicroCor,1,sum)
+mirnaMicroCor1<-mirnaMicroCor[mirnaMicroCor$sum1>0,]
+selSp<-apply(mirnaMicroCor1,2,sum)
+selSp1<-names(selSp[selSp>0])
+mirnaMicroCor2 <- mirnaMicroCor1[,selSp1]
+dim(mirnaMicroCor2)
+bacSel <- colnames(mirnaMicroCor2)[1:4]
+mirSel <- row.names(mirnaMicroCor2)[1:8]
+write.table(mirnaMicroCor2, file="mirnaMicroCor_adjP.csv", sep=",", col.names=NA)
+
+cor.microb <- t(microbMat2.ibs[row.names(microbMat2.ibs)%in%bacSel,]); dim(cor.microb)
+cor.mirna<-t(mirna1.ibs[row.names(mirna1.ibs) %in% mirSel,]); dim(cor.mirna)
+
+data2<-as.data.frame(cbind(cor.microb,cor.mirna));dim(data2)
+save(data2, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/sigCorrMicroRNAMicrobDataFrame.Rda")
+save(data1, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/rawDataFrameCorrMicroRNAMicrob.Rda")
+
+
+# littleIbsMappingIBsHcClust<-read.delim(file="littleIbsMappingIBsHcClust.csv",sep=",", row.names=1); dim(littleIbsMappingIBsHcClust)
+# map.mirna<-littleIbsMappingIBsHcClust[substr(row.names(littleIbsMappingIBsHcClust),8,13)%in%row.names(data2),]; dim(map.mirna)
+# 
+# row.names(map.mirna)<-substr(row.names(map.mirna),8,13)
+# map.mirna<-map.mirna[row.names(data2),]
+# match(row.names(data2),row.names(map.mirna))
+# data3<-cbind(data2, map.mirna[,c(5,3,4,33)])
+colnames(data2)<-gsub(" ","",colnames(data2))
+colnames(data2)<-gsub(";","",colnames(data2))
+colnames(data2)<-gsub("-","_",colnames(data2))
+colnames(data2)<-gsub("\\|","",colnames(data2))
+colnames1<-colnames(data2)
+
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/miRNA_microbiome_integration11232016/microbMiRNAcorPlotsadjP/")
+for ( i in 1:4)
+  for (j in 5:12) {
+    cat(paste("plot",i,j))
+    P<-ggplot(data2, aes(data2[,i],data2[,j])) + geom_point(size=4) 
+    q <- P+geom_point()+ xlab(colnames1[i]) + ylab(colnames1[j]) + geom_smooth(aes(data2[,i],data2[,j]), method=lm, se=FALSE)
+ggsave(q, filename = paste(i,colnames1[j],".png", sep = ""))
+  }
+
+####### Healthy controls
+
+data1<-cbind(t(mirna1.hc),t(microbMat2.hc))
+
+# library(Hmisc)
+cor1 <- rcorr(as.matrix(data1), type="spearman")
+cor1$r[1:5,1:5]
+cor1$P[1:5,1:5]
+corMat<-round(cor1$r, 2)
+adj.p.mat <- round(apply(cor1$P,2,p.adjust),5)
+
+# sub1<-function(x)(subset(x, x[i]>=0.5))
+highCor<-matrix(NA, nrow=179, ncol=179)
+row.names(highCor)<-row.names(adj.p.mat)
+colnames(highCor)<-colnames(adj.p.mat)
+is.na(adj.p.mat) <- NA
+
+# for ( i in 1:dim(adj.p.mat)[1])
+#   for ( j in 1:dim(adj.p.mat)[2])
+#   {
+#     if (adj.p.mat[i,j] <= 0.05) {  
+#     highCor[i,j] <- 1 } 
+    # else if(adj.p.mat[i,j] > 0.05) {
+    # highCor[i,j] <- 0 } 
+    # else if (adj.p.mat[i,j] == 'NA') {
+    # highCor[i,j] <- 0 } 
+    # }
+
+highCor <- ifelse(adj.p.mat <= 0.1, 1,0)
+
+mirnaMicroCor<-highCor[1:150,151:179]
+mirnaMicroCor<-as.data.frame(mirnaMicroCor)
+mirnaMicroCor$sum1<-apply(mirnaMicroCor,1,sum)
+mirnaMicroCor1<-mirnaMicroCor[mirnaMicroCor$sum1>0,]
+selSp<-apply(mirnaMicroCor1,2,sum)
+selSp1<-names(selSp[selSp>0])
+mirnaMicroCor2 <- mirnaMicroCor1[,selSp1]
+dim(mirnaMicroCor2)
+bacSel <- colnames(mirnaMicroCor2)[1:5]
+mirSel <- row.names(mirnaMicroCor2)[1:4]
+write.table(mirnaMicroCor2, file="mirnaMicroCor_adjP_healthy control.csv", sep=",", col.names=NA)
+# None pass the fdr threshold of 0.1 in HCs.
+
+cor.microb <- t(microbMat2.hc[row.names(microbMat2.hc)%in%bacSel,]); dim(cor.microb)
+cor.mirna<-t(mirna1.hc[row.names(mirna1.hc) %in% mirSel,]); dim(cor.mirna)
+
+data2<-as.data.frame(cbind(cor.microb,cor.mirna));dim(data2)
+# littleIbsMappingIBsHcClust<-read.delim(file="littleIbsMappingIBsHcClust.csv",sep=",", row.names=1); dim(littleIbsMappingIBsHcClust)
+# map.mirna<-littleIbsMappingIBsHcClust[substr(row.names(littleIbsMappingIBsHcClust),8,13)%in%row.names(data2),]; dim(map.mirna)
+# 
+# row.names(map.mirna)<-substr(row.names(map.mirna),8,13)
+# map.mirna<-map.mirna[row.names(data2),]
+# match(row.names(data2),row.names(map.mirna))
+# data3<-cbind(data2, map.mirna[,c(5,3,4,33)])
+colnames(data2)<-gsub(" ","",colnames(data2))
+colnames(data2)<-gsub(";","",colnames(data2))
+colnames(data2)<-gsub("-","_",colnames(data2))
+colnames(data2)<-gsub("\\|","",colnames(data2))
+colnames1<-colnames(data2)
+
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/miRNA_microbiome_integration11232016/microbMiRNAcorPlotsadjP/")
+for ( i in 1:5)
+  for (j in 6:9) {
+    cat(paste("plot",i,j))
+    P<-ggplot(data2, aes(data2[,i],data2[,j])) + geom_point(size=4) 
+    q <- P+geom_point()+ xlab(colnames1[i]) + ylab(colnames1[j]) + geom_smooth(aes(data2[,i],data2[,j]), method=lm, se=FALSE)
+ggsave(q, filename = paste(i,colnames1[j],"HC.png", sep = ""))
+  }
+# miR-200a correlation wwith(
+
+
+P<-ggplot(data2, aes(data2$hsa_miR_200a_3p0,data2$k__Bacteriap__Bacteroidetesc__Bacteroidiao__Bacteroidalesf__Porphyromonadaceaeg__Parabacteroidess__distasonis)) + geom_point(size=4) 
+    q <- P+geom_point() + geom_smooth(aes(data2$hsa_miR_200a_3p0,data2$k__Bacteriap__Bacteroidetesc__Bacteroidiao__Bacteroidalesf__Porphyromonadaceaeg__Parabacteroidess__distasonis), method=lm, se=FALSE)
+
+# Difference in the correlations between ibs and hc
+cor.ibs<- corMat
+cor.hc<- corMat
+
+diffcor.out <- comp.2.cc.fdr(output.file = "Comp_ibs.microb_mirna.txt",cor.ibs, cor.hc, method = "spearman",p.adjust.methods = "local", threshold = 0.05)
+```
+
+
+```{r}
+mir_b <- as.data.frame(t(mir_b))
+mir_b$BH <- substr(row.names(mir_b),7,11)
+mir_b$Dx <- gsub("IBS.*", "IBS", mir_b$BH)
+mir_b$Dx <- gsub("HC.*", "HC", mir_b$Dx)
+mir_b_mir200a <- as.data.frame(cbind(mir_b[,grep("200a",colnames(mir_b))], mir_b$Dx))
+row.names(mir_b_mir200a) <- row.names(mir_b)
+colnames(mir_b_mir200a) <- c("hsa_miR_200a", "Dx")
+mir_b_mir200a$hsa_miR_200a <- as.numeric(as.character(mir_b_mir200a$hsa_miR_200a))
+library(ggplot2)
+p <- ggplot(mir_b_mir200a, aes(Dx,hsa_miR_200a, fill = Dx))
+p +geom_boxplot()
+
+
+
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/microbMat.Rda")
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/mirnaMat.Rda")
+# microbMatSc <- apply(microbMat,1,scale)
+# row.names(microbMatSc) <- colnames(microbMat)
+microbMat <- as.data.frame(microbMat)
+pheno <- read.csv("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/mapping.bray_curtis1.csv", row.names = 7)
+microbMat$Dx <- pheno[match(rownames(pheno),rownames(microbMat)),]$Dx
+microbMatPDist <- cbind(microbMat[,grep("distasonis",colnames(microbMat))], as.character(microbMat$Dx))
+row.names(microbMatPDist) <- row.names(microbMat)
+colnames(microbMatPDist) <- c("P_distasonis", "Dx")
+microbMatPDist <- as.data.frame(microbMatPDist)
+microbMatPDist$P_distasonis <- as.numeric(as.character(microbMatPDist$P_distasonis))
+library(ggplot2)
+p <- ggplot(microbMatPDist, aes(Dx,P_distasonis, fill = Dx))
+p +geom_boxplot()
+
+row.names(mir_b_mir200a) <- substr(row.names(mir_b_mir200a),1,5)
+PDistMir200 <- microbMatPDist[row.names(microbMatPDist)%in%row.names(mir_b_mir200a),] 
+PDistMir200 <- PDistMir200 [row.names(mir_b_mir200a),]
+data1 <- cbind(mir_b_mir200a, PDistMir200)
+p <- ggplot(data1, aes(Dx,hsa_miR_200a, fill = Dx))
+p +geom_boxplot()
+
+data1.ibs <- subset(data1, data1$Dx =="IBS")
+p <- ggplot(data1.ibs, aes(P_distasonis, log(hsa_miR_200a,2),color = Dx))
+p + geom_point()
+
+
+         
+```
+

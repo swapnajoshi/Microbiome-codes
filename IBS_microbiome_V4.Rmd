@@ -1,0 +1,688 @@
+---
+title: "IBS_microbiome_V4"
+author: "Swapna Mahurkar-Joshi"
+date: "August 11, 2016"
+output: word_document
+---
+################# most analyses finalized were used from this code
+Turicibacter
+content: miRNA mRNA integration preliminary; pubmed search; stool microbiome
+Enrollment reoprt table
+
+# Libraries
+```{r, message = FALSE}
+# install dada 2 package dev tools 
+
+source("http://bioconductor.org/biocLite.R")
+# biocLite(suppressUpdates = FALSE)
+biocLite("survival", suppressUpdates = FALSE)
+
+# biocLite("devtools")
+# library("devtools")
+# devtools::install_github("benjjneb/dada2")
+# library(dada2)
+library(phyloseq)
+library("ggplot2")
+library("scales")
+library("grid")
+library("ape")
+library(phytools)
+#WGCNA
+library(WGCNA)
+library(flashClust)
+#Heatmap
+library(dplyr)
+library(NMF)
+library(RColorBrewer)
+```
+
+#bray_curtis distances
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/")
+bc.dm <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/bray_curtis_merged_otu_table.txt", row.names=1)
+# import mapping file
+map1 <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/ibs.mapping_new.csv",  sep=',', row.names=1); dim(map1)
+map2<-map1[row.names(map1)%in%colnames(bc.dm),]; dim(map2)
+map2<-map2[colnames(bc.dm),]
+match(row.names(map2),colnames(bc.dm))
+bc.dm1<-as.dist(bc.dm)
+sampleTree = flashClust(bc.dm1, method = "ward")
+labels1=map2$Dx
+dat.ordered<-bc.dm[sampleTree$order,]
+```
+
+# plot
+```{r}
+# sizeGrWindow(15,12)
+# par(cex = 0.6);
+# par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Heirarchical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2, labels=labels1)
+abline(h = 4, col = "red")
+```
+# cluster membership
+```{r}
+clust1 = cutreeStatic(sampleTree, cutHeight = 4, minSize = 1)
+table(clust1)
+lab<-map2[sampleTree$labels,]$Dx
+lab1<-map2[sampleTree$labels,]$NDPNum
+df2<-as.data.frame(cbind(clust1,as.character(lab)))
+head(df2)
+table(df2$clust1, df2$V2) #   42% vs 30% hcs in cluster 1 vs cluster 2
+
+# set.seed(123)
+# rainbow(n=6)
+# [1] "#FF0000FF" "#FFFF00FF" "#00FF00FF" "#00FFFFFF" "#0000FFFF" "#FF00FFFF"
+
+df2$color1<-NA
+for ( i in 1: 85)
+{if (df2[i,1]=="1")
+{df2[i,3]<-"red"}
+  else if (df2[i,1]=="2")
+  {df2[i,3]<-"cyan"}
+  else if (df2[i,1]=="3")
+  {df2[i,3]<-"orange"}
+}
+
+df2$colorDx<-NA
+for ( i in 1: 85)
+{if (df2[i,2]=="IBS")
+{df2[i,4]<-"cyan"}
+  else if (df2[i,2]=="HC")
+  {df2[i,4]<-"red"}
+}
+df2<-cbind(df2, as.character(lab1))
+
+library(dendextend)
+png("BrayCurtiswardHierarchical.png", res = 200, height = 2000, width = 2500)
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 4, col = "red")
+colored_bars(colors= df2[,c(3,4)], dend = sampleTree, y_shift = -1.0, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+dev.off()
+
+#plot
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 4, col = "red")
+colored_bars(colors= df2[,c(3,4)], dend = sampleTree, y_shift = -1.0, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+
+# cluster memberships
+map2$IBS_HC_bc_ward_clu_memb <- df2[,1]
+```
+# bray curtis only IBS
+```{r}
+map3<-map1[map1$Dx == "IBS",]; dim(map3)
+bc.dm.ibs <- bc.dm[row.names(bc.dm)%in%row.names(map3),]
+bc.dm.ibs <- bc.dm.ibs[,colnames(bc.dm.ibs)%in%row.names(map3)]; dim(bc.dm.ibs)
+map3<-map3[colnames(bc.dm.ibs),]
+match(row.names(map3),colnames(bc.dm.ibs))
+bc.dm.ibs1<-as.dist(bc.dm.ibs)
+sampleTree = flashClust(bc.dm.ibs1, method = "ward")
+labels1=map3$Dx
+dat.ordered<-bc.dm.ibs[sampleTree$order,]
+```
+
+# plot
+```{r}
+# sizeGrWindow(15,12)
+# par(cex = 0.6);
+# par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Heirarchical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2, labels=labels1)
+abline(h = 3.5, col = "red")
+```
+
+# cluster membership
+```{r}
+clust1 = cutreeStatic(sampleTree, cutHeight = 3.5, minSize = 1)
+table(clust1)
+lab<-map3[sampleTree$labels,]$Dx
+lab1<-map3[sampleTree$labels,]$NDPNum
+df3<-as.data.frame(cbind(clust1,as.character(lab)))
+head(df3)
+table(df3$clust1, df3$V2) #   42% vs 30% hcs in cluster 1 vs cluster 2
+
+set.seed(123)
+rainbow(n=6)
+# [1] "#FF0000FF" "#FFFF00FF" "#00FF00FF" "#00FFFFFF" "#0000FFFF" "#FF00FFFF"
+
+df3$color1<-NA
+for ( i in 1: 53)
+{if (df3[i,1]=="1")
+{df3[i,3]<-"red"}
+  else if (df3[i,1]=="2")
+  {df3[i,3]<-"cyan"}
+  else if (df3[i,1]=="3")
+  {df3[i,3]<-"orange"}
+}
+
+# df2$colorDx<-NA
+# for ( i in 1: 53)
+# {if (df2[i,2]=="IBS")
+# {df2[i,4]<-"cyan"}
+#   else if (df2[i,2]=="HC")
+#   {df2[i,4]<-"red"}
+# }
+# df2<-cbind(df2, as.character(lab1))
+
+library(dendextend)
+png("Bray-curtisWardHierarchical_IBS.png", res = 200, height = 2000, width = 2500)
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 3.5, col = "red")
+colored_bars(colors= df3[,3], dend = sampleTree, y_shift = -0.6, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+dev.off()
+
+#plot
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 3.5, col = "red")
+colored_bars(colors= df3[,3], dend = sampleTree, y_shift = -0.6, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+
+# cluster memberships
+df3$NDP <- map3$NDPNum
+map2$IBS_brayCurtis_memb <- ifelse (map2$NDPNum %in% df3$NDP, df3$clust1, "4")
+write.table(map2, file = "mapping.bray_curtis.csv", sep = ",", col.names = NA)
+
+map3$IBS_bray_ward_clu_memb <- df3[,1]
+map2$dxGenInt <- interaction(map2$Dx, map2$Gender)
+write.table(map3, file = "mapping.ibs_bc.csv", sep = ",", col.names = NA)
+```
+#################################
+
+
+##################         
+# unweighted unifrac
+
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/associationsMicrobiome/biopsyMicrobiome/")
+unwei.dm <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/unweighted_unifrac_dm.txt", row.names=1)
+# import mapping file
+map1 <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/ibs.mapping_new.csv",  sep=',', row.names=1); dim(map1)
+map2<-map1[row.names(map1)%in%colnames(unwei.dm),]; dim(map2)
+map2<-map2[colnames(unwei.dm),]
+match(row.names(map2),colnames(unwei.dm))
+unwei.dm1<-as.dist(unwei.dm)
+library(flashClust)
+sampleTree = flashClust(unwei.dm1, method = "complete")
+labels1=map2$Dx
+dat.ordered<-unwei.dm[sampleTree$order,]
+```
+# plot
+```{r}
+sizeGrWindow(15,12)
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Heirarchical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2, labels=labels1)
+abline(h = 0.76, col = "red")
+```
+# cluster membership
+```{r}
+clust1 = cutreeStatic(sampleTree, cutHeight = 0.76, minSize = 1)
+table(clust1)
+lab<-map2[sampleTree$labels,]$Dx
+lab1<-map2[sampleTree$labels,]$NDPNum
+df2<-as.data.frame(cbind(clust1,as.character(lab)))
+head(df2)
+table(df2$clust1, df2$V2) #   42% vs 30% hcs in cluster 1 vs cluster 2
+
+set.seed(123)
+rainbow(n=6)
+# [1] "#FF0000FF" "#FFFF00FF" "#00FF00FF" "#00FFFFFF" "#0000FFFF" "#FF00FFFF"
+
+df2$color1<-NA
+for ( i in 1: 85)
+{if (df2[i,1]=="1")
+{df2[i,3]<-"red"}
+  else if (df2[i,1]=="2")
+  {df2[i,3]<-"cyan"}
+  else if (df2[i,1]=="3")
+  {df2[i,3]<-"orange"}
+}
+
+df2$colorDx<-NA
+for ( i in 1: 85)
+{if (df2[i,2]=="IBS")
+{df2[i,4]<-"cyan"}
+  else if (df2[i,2]=="HC")
+  {df2[i,4]<-"red"}
+}
+df2<-cbind(df2, as.character(lab1))
+
+library(dendextend)
+png("weightedUnifracWardHierarchical.png", res = 200, height = 2000, width = 2500)
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 4, col = "red")
+colored_bars(colors= df2[,c(3,4)], dend = sampleTree, y_shift = 0.4, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+dev.off()
+
+# plot 
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 4, col = "red")
+colored_bars(colors= df2[,c(3,4)], dend = sampleTree, y_shift = -1.0, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+
+# cluster memberships
+map2$IBS_HC_wei_ward_clu_memb <- df2[,1]
+```
+# weighted dm
+```{r}
+wei.dm <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/weighted_unifrac_dm.txt", row.names=1)
+# import mapping file
+map1 <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/ibs.mapping_new.csv",  sep=',', row.names=1); dim(map1)
+map2<-map1[row.names(map1)%in%colnames(wei.dm),]; dim(map2)
+map2<-map2[colnames(wei.dm),]
+match(row.names(map2),colnames(wei.dm))
+wei.dm1<-as.dist(wei.dm)
+sampleTree = flashClust(wei.dm1, method = "ward")
+labels1=map2$Dx
+dat.ordered<-wei.dm[sampleTree$order,]
+```
+
+# plot
+```{r}
+# sizeGrWindow(15,12)
+# par(cex = 0.6);
+# par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Heirarchical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2, labels=labels1)
+abline(h = 3, col = "red")
+```
+
+# cluster membership
+```{r}
+clust1 = cutreeStatic(sampleTree, cutHeight = 3, minSize = 1)
+table(clust1)
+lab<-map2[sampleTree$labels,]$Dx
+lab1<-map2[sampleTree$labels,]$NDPNum
+df2<-as.data.frame(cbind(clust1,as.character(lab)))
+head(df2)
+table(df2$clust1, df2$V2) #   42% vs 30% hcs in cluster 1 vs cluster 2
+
+set.seed(123)
+rainbow(n=6)
+# [1] "#FF0000FF" "#FFFF00FF" "#00FF00FF" "#00FFFFFF" "#0000FFFF" "#FF00FFFF"
+
+df2$color1<-NA
+for ( i in 1: 85)
+{if (df2[i,1]=="1")
+{df2[i,3]<-"red"}
+  else if (df2[i,1]=="2")
+  {df2[i,3]<-"cyan"}
+  else if (df2[i,1]=="3")
+  {df2[i,3]<-"orange"}
+}
+
+df2$colorDx<-NA
+for ( i in 1: 85)
+{if (df2[i,2]=="IBS")
+{df2[i,4]<-"cyan"}
+  else if (df2[i,2]=="HC")
+  {df2[i,4]<-"red"}
+}
+df2<-cbind(df2, as.character(lab1))
+
+library(dendextend)
+png("weightedUnifracWardHierarchical.png", res = 200, height = 2000, width = 2500)
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 4, col = "red")
+colored_bars(colors= df2[,c(3,4)], dend = sampleTree, y_shift = -1.0, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+dev.off()
+
+#plot 
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 3, col = "red")
+colored_bars(colors= df2[,c(3,4)], dend = sampleTree, y_shift = -0.7, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+
+# cluster memberships
+map2$IBS_HC_wei_ward_clu_memb <- df2[,1]
+```
+# Cluster membership with in IBS
+```{r}
+wei.dm <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/weighted_unifrac_dm.txt", row.names=1)
+# import mapping file
+map1 <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/ibs.mapping_new.csv",  sep=',', row.names=1); dim(map1)
+map3<-map1[map1$Dx == "IBS",]; dim(map3)
+wei.dm.ibs <- wei.dm[row.names(wei.dm)%in%row.names(map3),]
+wei.dm.ibs <- wei.dm.ibs[,colnames(wei.dm.ibs)%in%row.names(map3)]; dim(wei.dm.ibs)
+map3<-map3[colnames(wei.dm.ibs),]
+match(row.names(map3),colnames(wei.dm.ibs))
+wei.dm.ibs1<-as.dist(wei.dm.ibs)
+sampleTree = flashClust(wei.dm.ibs1, method = "ward")
+labels1=map3$Dx
+dat.ordered<-wei.dm.ibs[sampleTree$order,]
+```
+
+# plot
+```{r}
+# sizeGrWindow(15,12)
+# par(cex = 0.6);
+# par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Heirarchical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2, labels=labels1)
+abline(h = 3.5, col = "red")
+```
+
+# cluster membership
+```{r}
+clust1 = cutreeStatic(sampleTree, cutHeight = 3.5, minSize = 1)
+table(clust1)
+lab<-map3[sampleTree$labels,]$Dx
+lab1<-map3[sampleTree$labels,]$NDPNum
+df3<-as.data.frame(cbind(clust1,as.character(lab)))
+head(df3)
+table(df3$clust1, df3$V2) #   42% vs 30% hcs in cluster 1 vs cluster 2
+
+set.seed(123)
+rainbow(n=6)
+# [1] "#FF0000FF" "#FFFF00FF" "#00FF00FF" "#00FFFFFF" "#0000FFFF" "#FF00FFFF"
+
+df3$color1<-NA
+for ( i in 1: 53)
+{if (df3[i,1]=="1")
+{df3[i,3]<-"red"}
+  else if (df3[i,1]=="2")
+  {df3[i,3]<-"cyan"}
+  else if (df3[i,1]=="3")
+  {df3[i,3]<-"orange"}
+}
+
+# df2$colorDx<-NA
+# for ( i in 1: 53)
+# {if (df2[i,2]=="IBS")
+# {df2[i,4]<-"cyan"}
+#   else if (df2[i,2]=="HC")
+#   {df2[i,4]<-"red"}
+# }
+# df2<-cbind(df2, as.character(lab1))
+
+library(dendextend)
+png("weightedUnifracWardHierarchical_IBS.png", res = 200, height = 2000, width = 2500)
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 3.5, col = "red")
+colored_bars(colors= df3[,3], dend = sampleTree, y_shift = -0.6, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+dev.off()
+
+#plot
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 1.5, labels=labels1)
+abline(h = 3.5, col = "red")
+colored_bars(colors= df3[,3], dend = sampleTree, y_shift = -0.6, rowLabels = c("Cluster", "Dx"),sort_by_labels_order 	
+= TRUE)
+dev.off()
+
+# cluster memberships
+map3$IBS_wei_ward_clu_memb <- df3[,1]
+# write.table(map2, file = "mapping.ibsHc_bc_ward_clu.csv", sep = ",", col.names = "NA")
+# write.table(map2, file = "mapping.ibsHc.csv", sep = ",", col.names = NA)
+# write.table(map3, file = "mapping.ibs.csv", sep = ",", col.names = NA)
+```
+
+# stool microbiome
+
+```{r}
+fec <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/fecal_miRNA/otu_table_Experiment_SCOR_feces_summary.txt", sep = "\t")
+fec.sam <- matrix(unlist(strsplit(as.character(as.factor(fec[13:88,])), "\\:")), ncol = 2, nrow = 76, byrow = TRUE)
+fec.sam <- substr(fec.sam[,1],8,12)
+bio.sam <- substr(row.names(bc.dm), 8,12)
+com.sam <- bio.sam[bio.sam%in%fec.sam]
+map1 <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/ibs.mapping_new.csv",  sep=',', row.names=1); dim(map1)
+map2 <- map1[map1$NDPNum%in%com.sam,]
+table(map2$Dx)
+```
+
+```{r}
+###########################################################
+# what is the percentage of phyla  in each enterotype
+mapIbsHcCluster <- read.csv("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/technicallyCorrectData/biopsyMicrobiome/oldData/mapIbsHcClusterBig_weighClu.csv",sep=",", row.names=1)
+d.phylum.1 <- as.data.frame(t(d.phylum[row.names(d.phylum) %in% row.names(mapIbsHcCluster[mapIbsHcCluster$IbsHcClusterMemb == 1,]),])); dim(d.phylum.1)
+d.phylum.1$ave1 <- apply(d.phylum.1,1,mean)
+d.phylum.1.ord <- d.phylum.1[order(-d.phylum.1$ave1),]
+cbind(row.names(d.phylum.1.ord)[1:5],d.phylum.1.ord$ave1[1:5])
+#     [,1]                              [,2]                
+# [1,] "k__Bacteria; p__Bacteroidetes"   "0.467219108300113" 
+# [2,] "k__Bacteria; p__Firmicutes"      "0.415597971466505" 
+# [3,] "k__Bacteria; p__Proteobacteria"  "0.07363521564665"  
+# [4,] "k__Bacteria; p__Verrucomicrobia" "0.0178527139379595"
+# [5,] "k__Bacteria; p__Actinobacteria"  "0.0168017848720772"
+
+d.phylum.2 <- as.data.frame(t(d.phylum[row.names(d.phylum) %in% row.names(mapIbsHcCluster[mapIbsHcCluster$IbsHcClusterMemb == 2,]),])); dim(d.phylum.2)
+d.phylum.2$ave2 <- apply(d.phylum.2,1,mean)
+d.phylum.2.ord <- d.phylum.2[order(-d.phylum.2$ave2),]
+cbind(row.names(d.phylum.2.ord)[1:5],d.phylum.2.ord$ave2[1:5])
+#      [,1]                             [,2]                 
+# [1,] "k__Bacteria; p__Bacteroidetes"  "0.73420033932427"   
+# [2,] "k__Bacteria; p__Firmicutes"     "0.22589673095607"   
+# [3,] "k__Bacteria; p__Proteobacteria" "0.0273454368590559" 
+# [4,] "k__Bacteria; p__Fusobacteria"   "0.00412435889789236"
+# [5,] "k__Bacteria; p__Actinobacteria" "0.00374544303777273"
+
+d.phylum.3 <- as.data.frame(t(d.phylum[row.names(d.phylum) %in% row.names(mapIbsHcCluster[mapIbsHcCluster$IbsHcClusterMemb == 3,]),])); dim(d.phylum.3)
+d.phylum.3$ave3 <- apply(d.phylum.3,1,mean)
+d.phylum.3.ord <- d.phylum.3[order(-d.phylum.3$ave3),]
+cbind(row.names(d.phylum.3.ord)[1:5],d.phylum.3.ord$ave3[1:5])
+
+# > cbind(row.names(d.phylum.3.ord)[1:5],d.phylum.3.ord$ave3[1:5])
+#      [,1]                              [,2]                 
+# [1,] "k__Bacteria; p__Proteobacteria"  "0.496228677639979"  
+# [2,] "k__Bacteria; p__Firmicutes"      "0.250357071011006"  
+# [3,] "k__Bacteria; p__Bacteroidetes"   "0.243795622561612"  
+# [4,] "k__Bacteria; p__Actinobacteria"  "0.00662543837788632"
+# [5,] "k__Bacteria; p__Verrucomicrobia" "0.00227779135692224"
+
+
+# plot phylum and ETI
+
+ match(row.names(mapIbsHcCluster), row.names(d.phylum))
+ d.phylum<- as.data.frame(d.phylum)
+
+mapIbsHcCluster$proteobacteria <- d.phylum$'k__Bacteria; p__Proteobacteria'
+ cor.test(mapIbsHcCluster$proteobacteria,mapIbsHcCluster$ETI_Physical_Score, method =  'spearman')
+map4_numTraits <- mapIbsHcCluster[,c(15:18,20,22:37,42)]
+p.traits1<-matrix(NA, nrow=22, ncol=1)
+for ( i in 1: 21)
+{p.traits1[i,1]<-summary(lm(map4_numTraits[,i] ~ map4_numTraits[,22]))$coefficients[,4][2]}
+row.names(p.traits1)<-colnames(map4_numTraits)
+p.traits1
+write.table(p.traits1, file="TraitsIbsClusters_lm.csv", col.names=NA, sep=",")
+p.traits1
+
+##############################################################################
+library(mixOmics)
+color<-color.jet
+par(mfrow = c(1,2));
+png("mixOmics.png", height=2000, width=3000, res=300)
+liver.splsda <- imgCor(t(mirna1), t(microbMat2), X.var.names = TRUE,
+                       Y.var.names = TRUE,
+                       sideColors = TRUE,
+                       interactive.dev = TRUE,
+                       main = TRUE)
+# color, row.cex, col.cex,symkey, keysize,
+# xlab, ylab, margins, lhei, lwid)
+dev.off()
+
+data1<-cbind(t(mirna1),t(microbMat2))
+library(ellipse)
+ctab <- cor(data1, method = "spearman")
+
+corMat<-round(ctab, 2)
+# sub1<-function(x)(subset(x, x[i]>=0.5))
+highCor<-matrix(NA, nrow=356, ncol=356)
+row.names(highCor)<-row.names(corMat)
+colnames(highCor)<-colnames(corMat)
+for ( i in 1:dim(corMat)[1])
+  for ( j in 1:dim(corMat)[2])
+  {
+    if(corMat[i,j] >= 0.4){
+    highCor[i,j] <- 1
+    }   else if(corMat[i,j] < -0.4) {
+    highCor[i,j] <- 1
+    } else {
+      highCor[i,j] <- 0
+    }
+  }
+
+mirnaMicroCor<-highCor[1:339,340:356]
+mirnaMicroCor<-as.data.frame(mirnaMicroCor)
+
+mirnaMicroCor$sum1<-apply(mirnaMicroCor,1,sum)
+mirnaMicroCor1<-mirnaMicroCor[mirnaMicroCor$sum1>0,]
+selSp<-apply(mirnaMicroCor1,2,sum)
+selSp1<-names(selSp[selSp>0])
+mirnaMicroCor2 <- mirnaMicroCor1[,selSp1]
+
+dim(mirnaMicroCor2)
+
+write.table(mirnaMicroCor2, file="mirnaMicroCor2.csv", sep=",", col.names=NA)
+
+bacSel <- colnames(mirnaMicroCor1)
+mirSel <- row.names(mirnaMicroCor1)
+
+cor.microb <- t(microbMat2[row.names(microbMat2)%in%bacSel,]); dim(cor.microb)
+cor.mirna<-t(mirna1[row.names(mirna1) %in% mirSel,]); dim(cor.mirna)
+
+data2<-as.data.frame(cbind(cor.microb,cor.mirna))
+littleIbsMappingIBsHcClust<-read.delim(file="littleIbsMappingIBsHcClust.csv",sep=",", row.names=1); dim(littleIbsMappingIBsHcClust)
+map.mirna<-littleIbsMappingIBsHcClust[substr(row.names(littleIbsMappingIBsHcClust),8,13)%in%row.names(data2),]; dim(map.mirna)
+
+row.names(map.mirna)<-substr(row.names(map.mirna),8,13)
+map.mirna<-map.mirna[row.names(data2),]
+match(row.names(data2),row.names(map.mirna))
+data3<-cbind(data2, map.mirna[,c(5,3,4,33)])
+colnames(data3)<-gsub(" ","",colnames(data3))
+colnames(data3)<-gsub(";","",colnames(data3))
+colnames(data3)<-gsub("-","_",colnames(data3))
+colnames(data3)<-gsub("\\|","",colnames(data3))
+colnames1<-colnames(data3)
+
+setwd("C:/Users/swapnajoshi-admin/Documents/swapna/microbMiRNAcorPlots/")
+for ( i in 1:17)
+  for (j in 18:68) {
+    cat(paste("plot",i,j))
+    P<-ggplot(data3, aes(data3[,i],data3[,j])) + geom_point(size=4) 
+    q<-P+geom_point(aes(color=as.factor(data3$Group)))+ xlab(colnames1[i]) + ylab(colnames1[j])
+ggsave(q, filename = paste(colnames1[i],colnames1[j],".png"))
+  }
+
+P<-ggplot(data3, aes(data3[,9],data3[,38])) + geom_point(size=4) 
+q<-P+geom_point(aes(color=as.factor(data3$Group)))+ xlab("F_Lachnospiraceae") + ylab("hsa_miR_200c_3p0") + geom_smooth(aes(data3[,9],data3[,38],colour=factor(Group)), method=lm, se=FALSE)
+q
+ggsave(q, filename = "hsa_miR_200c_3p0_F_Lachnospiraceae_lm.png")
+
+P<-ggplot(data3, aes(data3[,7],data3[,19])) + geom_point(size=4) 
+q<-P+geom_point(aes(color=as.factor(data3$Group)))+ xlab("F_Alicyclobacillus") + ylab("hsa_miR_195_5p0") + geom_smooth(aes(data3[,7],data3[,19],colour=factor(Group)), method=lm, se=FALSE)
+q
+ggsave(q, filename = "hsa_miR_195_5p0_F_Alicyclobacillus_lm.png")
+
+```
+
+# pubmed search for articles related to the miRNAs of interest
+
+```{r}
+miR <- c("hsa-miR-141", "hsa-miR-144","hsa-miR-125b","hsa-miR-139", "hsa-miR-204","hsa-miR-100", "hsa-let-7g","hsa-miR-1", "hsa-miR-411","hsa-miR-200c", "hsa-miR-374a" )
+
+uniq.mirna <- row.names(subset(miR, duplicated(gsub('\\|.*',"",row.names(SigRes.fc))) == FALSE))
+uniq.mirna <- gsub('\\|.*',"",uniq.mirna)
+uniq.mirna <- gsub('-3p',"",uniq.mirna)
+uniq.mirna <- gsub('-5p',"",uniq.mirna)
+
+library(RISmed)
+
+for ( i in 1:length(uniq.mirna))
+    {  
+  res<- EUtilsSummary(uniq.mirna[i] , type="esearch", db="pubmed", datetype='pdat', mindate=2000,maxdate=2016, retmax=500)
+  pubmedID <- QueryId(res)
+    records <-EUtilsGet(res)
+  Atitle <- unlist(ArticleTitle(records))
+pubmed_data <- data.frame(cbind('Title'=Atitle,'Pubmed_ID'= pubmedID, 'Abstract'=AbstractText(records)))
+write.table(pubmed_data, file = paste(uniq.mirna[i],"pubmed.csv"), sep = ",", col.names = NA)
+}
+```
+# dada2 package
+```{r}
+library(dada2)
+library(ShortRead)
+library(ggplot2)
+```
+
+#some data were not demultiplexed, try demultiplexing here
+
+```{r, echo=FALSE}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/dada2_workflow/")
+path <- "C:/Users/swapnajoshi-admin/Documents/swapna/Missing data/unzipped" 
+fastqs <- list.files(path)
+fastqs
+# fastqs <- fns[grepl(".fastq$", fns)]
+fastqs <- sort(fastqs) # Sort ensures forward/reverse reads are in same order
+fnFs <- fastqs[grepl("_R1", fastqs)] # Just the forward read files
+fnRs <- fastqs[grepl("_R2", fastqs)] # Just the reverse read files
+# Get sample names from the first part of the forward read filenames
+sample.names <- sapply(strsplit(fnFs, "_"), `[`, 1)
+# Fully specify the path for the fnFs and fnRs
+fnFs <- file.path(path, fnFs)
+fnRs <- file.path(path, fnRs)
+
+```
+# examine the quality
+```{r}
+plotQualityProfile(fnFs[[1]])
+plotQualityProfile(fnRs[[1]])
+```
+
+# filter bad quality reads and trim the region with low quality score
+```{r}
+filt_path <- file.path(path, "filtered")
+if(!file_test("-d", filt_path)) dir.create(filt_path)
+filtFs <- file.path(filt_path, paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(filt_path, paste0(sample.names, "_R_filt.fastq.gz"))
+# Filter
+for(i in seq_along(fnFs)) {
+  fastqPairedFilter(c(fnFs[i], fnRs[i]), c(filtFs[i], filtRs[i]),
+                    trimLeft=c(0, 0), truncLen=c(150,150), 
+                    maxN=0, maxEE=2, truncQ=2, 
+                    compress=TRUE, verbose=TRUE)
+}
+
+
+
+```
+# Dereplication
+```{r}
+derepFs <- derepFastq(filtFs, verbose=TRUE)
+```
+
+
+```{r}
+# separate correlations in patients and controls - perason correlations; p values
+# correlation differentials and z statistics
+# heatmap to show differential correlations
+# interpretations
+
+
+data1<-cbind(t(mirna1),t(microbMat2))
+library(ellipse)
+ctab <- cor(data1, method = "spearman")
+
+corMat<-round(ctab, 2)
+# sub1<-function(x)(subset(x, x[i]>=0.5))
+highCor<-matrix(NA, nrow=356, ncol=356)
+row.names(highCor)<-row.names(corMat)
+colnames(highCor)<-colnames(corMat)
+for ( i in 1:dim(corMat)[1])
+  for ( j in 1:dim(corMat)[2])
+  {
+    if(corMat[i,j] >= 0.4){
+    highCor[i,j] <- 1
+    }   else if(corMat[i,j] < -0.4) {
+    highCor[i,j] <- 1
+    } else {
+      highCor[i,j] <- 0
+    }
+  }
+
+
+
+```
+

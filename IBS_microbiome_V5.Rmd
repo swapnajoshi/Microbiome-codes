@@ -1,0 +1,779 @@
+---
+title: "IBS_microbiome_V5_stool microbiome.Rmd"
+author: "Swapna Mahurkar-Joshi"
+date: "August 31, 2016"
+output: word_document
+---
+
+# Libraries
+
+```{r, message = FALSE, echo=FALSE}
+library(FunctionsAndLibrariesSJ)
+# install dada 2 package dev tools 
+
+source("http://bioconductor.org/biocLite.R")
+biocLite(c("mgcv","pcaMethods"))
+# biocLite("DESeq2", suppressUpdates = FALSE)
+
+# biocLite("devtools")
+# library("devtools")
+# devtools::install_github("benjjneb/dada2")
+# library(dada2)
+
+library(phyloseq)
+library("ggplot2")
+library("scales")
+library("grid")
+library("ape")
+library(phytools)
+#WGCNA
+library(WGCNA)
+library(flashClust)
+#Heatmap
+library(dplyr)
+library(NMF)
+library(RColorBrewer)
+# differntial abundance
+library("DESeq2")
+library(ggplot2)
+```
+
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/Phyloseq_workflow/fecal_microbiome/")
+header1<-scan("SCOR_feces_non_rarefied_taxonomy_reformatted.txt", nlines = 2, what = character())[8:83]
+genus=read.table("SCOR_feces_non_rarefied_taxonomy_reformatted.txt", sep="\t", row.names = 1)	
+names(genus)<-header1
+genus1 <- genus[,-dim(genus)[2]]
+
+# taxanomic data
+
+taxa_mat <- tax(row.names(genus1), as.character(genus$taxonomy))
+otus <- otu_table(genus1, taxa_are_rows = TRUE)
+tax1 <- tax_table(taxa_mat)
+# # metadata
+traits_mat <- read.csv("SCORFecesMapFINAL.csv", sep = ",", row.names = 1)
+ traits_mat <- traits_mat[substr(colnames(otus),7,11),]
+  traits_mat$sampleID <- colnames(otus)
+  traits_mat$NDPNum <- row.names(traits_mat)
+  row.names( traits_mat) <- traits_mat$sampleID
+traits_mat$Sex <- as.factor(traits_mat$Sex)
+traits_mat$BH <- as.factor(traits_mat$BH)
+# 
+traits_mat$Dx_Gender_interaction <- interaction(traits_mat$Group, traits_mat$Sex)
+traits <- sample_data(traits_mat)
+
+# phylogenic tree
+tree1 <- read_tree_greengenes("97_otus.tree")
+class(tree1)
+# x <- read.newick(file="97_otus.tree")
+# tree1 <- phy_tree(x)
+# is.rooted(tree1)
+# tree2 = root(tree1, 1, resolve.root = T)
+# any(tree1$tip.label == "'OTU1100'")
+ntaxa(tree1)
+# phyloseq object
+physeq = phyloseq(otus, tax1, traits,tree1)
+physeq
+```
+
+# Remove taxa not seen more than 3 times in at least 20% of the samples. This helps protect against an OTU with small mean & trivially large Coefficient of Variation. Save this as new phyloseq data object, PS. 
+```{r}
+PS = filter_taxa(physeq, function(x) sum(x > 3) > (0.2 * length(x)), TRUE)
+PS
+
+```
+# Transform abundances to the median sequencing depth.
+```{r}
+total <- median(sample_sums(PS))
+standf <- function(x, t = total) round(t * (x/sum(x)))
+PS1 <- transform_sample_counts(PS, standf)
+```
+# Filter the taxa using a cutoff of 3.0 for the Coefficient of Variation.
+```{r}
+PS2 <- filter_taxa(PS1, function(x) sd(x)/mean(x) > 3, TRUE)
+PS_b <- subset_taxa(PS2, Phylum == " p__Bacteroidetes")
+PS_f <- subset_taxa(PS2, Phylum == " p__Firmicutes")
+save(physeq, PS1, PS_b, PS_f, PS2, file = "IBS_phlyoseq.RData")
+```
+# rarefy
+```{r}
+set.seed(1022)
+phy <- rarefy_even_depth(PS2)
+# plot(as(otu_table(phy), 'vector'), as(otu_table(physeq), 'vector'))
+
+```
+# Beta diversity
+```{r}
+wud <- UniFrac(PS2, weighted = TRUE)
+pcoa.wud <- pcoa(wud)
+barplot(pcoa.wud$values$Relative_eig)
+sample_data(PS2)$Group <- as.factor(sample_data(PS2)$Group)
+p1 <- plot_ordination(PS2, pcoa.wud, "samples", color = "Group") + geom_point(size = 5) + scale_colour_hue(guide = "none")
+ggsave(p1, file = "ordination_plot_wud_feces.png")
+
+uud <- UniFrac(PS2, weighted = FALSE)
+pcoa.uud <- pcoa(uud)
+barplot(pcoa.uud$values$Relative_eig)
+sample_data(PS2)$Group <- as.factor(sample_data(PS2)$Group)
+p2 <- plot_ordination(PS2, pcoa.uud, "samples", color = "Group") + geom_point(size = 5) + scale_colour_hue(guide = "none")
+ggsave(p2, file = "ordination_plot_uud_feces.png")
+# biplot
+pca1 <- ordinate(PS2, "CCA")
+p1 <- plot_ordination(PS2, pca1, "species", color = "Phylum")
+(p1 <- ggplot(p1$data, p1$mapping) + geom_point(size = 5, alpha = 0.5) + facet_wrap(~Phylum) + scale_colour_hue(guide = "none"))
+
+library("reshape")
+# Melt the species-data.frame, DF, to facet each CA axis separately
+mdf <- melt(p1$data[, c("CA1", "CA2", "Phylum", "Family", "Genus")], 
+    id = c("Phylum", "Family", "Genus"))
+# Select some special outliers for labelling
+LF <- subset(mdf, variable == "CA2" & value < -1)
+# build plot: boxplot summaries of each CA-axis, with labels
+p <- ggplot(mdf, aes(Phylum, value, color = Phylum)) + geom_boxplot() + 
+    facet_wrap(~variable, 2) + scale_colour_hue(guide = "none") + theme_bw() 
+   # + opts(axis.text.x = theme_text(angle = -90, hjust = 0))
+# Add the text label layer, and render ggplot graphic
+(p <- p + geom_text(aes(Phylum, value + 0.1, color = Phylum, label = Family), 
+    data = LF, vjust = 0, size = 2))
+p <- plot_bar(PS2, "Phylum", fill = "Phylum", facet_grid = Group~.)  #ggsave('phyloseq_analysis-GPtaxaplot.pdf', p, width=8, height=10)
+
+# Firmicutes bacteroidetes ratio may be different between IBS and HCs
+
+```
+# export to text
+```{r}
+otu_table_transformed_rarefied <- otu_table(phy)
+
+PS3 <- filter_taxa(PS, function(x) sd(x)/mean(x) > 3, TRUE)
+otu_table_counts_unrarefied <- otu_table(PS3)
+
+write.table(otu_table_transformed_rarefied, file = "otu_table_transformed_rarefied_fecal.txt", sep = "\t", col.names = NA)
+write.table(otu_table_counts_unrarefied, file = "otu_table_counts_unrarefied_fecal.txt", sep = "\t", col.names = NA)
+phy.fecal <- phy
+```
+# common samples between fecal and mucosal data
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/Phyloseq_workflow/fecal_microbiome/")
+header1<-scan("SCOR_feces_non_rarefied_taxonomy_reformatted.txt", nlines = 2, what = character())[8:83]
+genus=read.table("SCOR_feces_non_rarefied_taxonomy_reformatted.txt", sep="\t", row.names = 1)	
+names(genus)<-header1
+fecal.otu <- genus
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/phyloseq_workflow/genus.rda")
+mucosal.otu <- genus
+
+colnames(mucosal.otu)[1:4] <- c("Biopsy.A6379", "Biopsy.A6244", "Biopsy.A5169","Biopsy.A5501")
+colnames(mucosal.otu)[1:85] <- substr(colnames(mucosal.otu)[1:85],8,12)
+dup1<-c("Feces.A6253.10.9.14","Feces.A6253.10.6.14")
+fecal.otu <- fecal.otu[!colnames(fecal.otu)%in%dup1]
+colnames(fecal.otu)[1:73] <- substr(colnames(fecal.otu)[1:73],7,11)
+colnames(fecal.otu)[74] <- "taxonomy"
+colnames(mucosal.otu)[86] <- "taxonomy"
+fecal.otu <- fecal.otu[,colnames(fecal.otu)%in%colnames(mucosal.otu)]
+fecal.otu <- fecal.otu[row.names(fecal.otu)%in% row.names(mucosal.otu),]
+mucosal.otu <- mucosal.otu[,colnames(mucosal.otu)%in%colnames(fecal.otu)]
+mucosal.otu <- mucosal.otu[row.names(mucosal.otu)%in%row.names(fecal.otu),]
+fecal.otu <- fecal.otu[,colnames(mucosal.otu)]
+mucosal.otu <- mucosal.otu[row.names(fecal.otu),]
+match(row.names(fecal.otu), row.names(mucosal.otu))
+match(colnames(fecal.otu), colnames(mucosal.otu))
+dim(fecal.otu)
+# [1] 12035    43
+write.table(fecal.otu, file = "fecal.otu.txt", sep = '\t', col.names = NA)
+write.table(mucosal.otu, file = "mucosal.otu.txt", sep = '\t', col.names = NA)
+map.fecal <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/New_qiime_analyses_11062016/fecal/SCORFecesMapFINAL.txt")
+
+map.fecal$NDP <- substr(map.fecal$X.OTU.ID, 7,11)
+map.fecal.com <- map.fecal[map.fecal$NDP%in%colnames(fecal.otu),]
+row.names(map.fecal.com) <- map.fecal.com$NDP
+map.fecal.com <- map.fecal.com[colnames(fecal.otu),]
+match(row.names(map.fecal.com),colnames(fecal.otu))
+write.table(map.fecal.com, file = "map.fecal.com.txt", sep = '\t', col.names = NA)
+
+
+colnames(fecal.otu)[1:76] <- substr(colnames(mucosal.otu),8,12)
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/phyloseq_workflow/IBS_phlyoseq.RData")
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/phyloseq_workflow/phy.rda")
+phy.mucosa <- phy
+# this sample is not a part of common samples but is a duplicate, that intereferes with the later commands, so remove it. 
+fec.sam<- sample_names(phy.fecal)
+dup1<-c("Feces.A6253.10.9.14","Feces.A6253.10.6.14")
+fec.sam1 <- fec.sam[!fec.sam%in%dup1]
+fecal1 <- prune_samples(fec.sam1, phy.fecal)
+
+sample_names(fecal1) <- substr(sample_names(fecal1),7,11)
+
+samples.keep <- sample_names(fecal1)[sample_names(fecal1) %in% sample_names(phy.mucosa)]
+fecal <- prune_samples(samples.keep, fecal1)
+mucosal <- prune_samples(samples.keep, phy.mucosa)
+
+otus.keep = names(taxa_sums(fecal))[names(taxa_sums(fecal))%in%names(taxa_sums(mucosal))]
+fecal1 = prune_taxa(otus.keep, fecal)
+mucosal1 = prune_taxa(otus.keep, mucosal)
+index_reorder(mucosal1, fecal1)
+fecal1.otu <- otu_table(fecal1)
+tax1 <- paste(tax_table(fecal1)[,1],tax_table(fecal1)[,2],tax_table(fecal1)[,3],tax_table(fecal1)[,4],tax_table(fecal1)[,5],tax_table(fecal1)[,6],tax_table(fecal1)[,7], sep = ";")
+mucosal1.otu <- otu_table(mucosal1)
+mucosal1.otu <- mucosal1.otu[,colnames(fecal1.otu)]
+mucosal1.otu<- as.data.frame(mucosal1.otu)
+fecal1.otu<- as.data.frame(fecal1.otu)
+mucosal1.otu$taxonomy <- tax1
+fecal1.otu$taxonomy <- tax1
+write.table(mucosal1.otu, file = "mucosal1_com_otu.txt", sep = '\t', col.names = NA)
+write.table(fecal1.otu, file = "fecal1_com_otu.txt", sep = '\t', col.names = NA)
+
+```
+# Ordination plots
+```{r}
+library(ggplot2)
+tax_table(PS2)[,2] <- gsub(" ", "", tax_table(PS2)[,2])
+set.seed(1022)
+## only mucosa
+p1 <- plot_ordination(phy.mucosa, ordinate(phy.mucosa, "MDS"), color = "Dx") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+ggsave(p1, file = "ord_plot_rarefied_mucosa_all.png")
+
+## only fecal
+set.seed(1022)
+p2 <- plot_ordination(phy.fecal, ordinate(phy.fecal, "MDS")) + geom_point(size = 5)  + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+ggsave(p2, file = "ord_plot_unrarefied_fecal_all.png") ### no covariate data
+
+
+##############################################
+### common samples mucosa Dx
+set.seed(1022)
+p3 <- plot_ordination(mucosal1, ordinate(mucosal1, "MDS"), color = "Dx") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+ggsave(p3, file = "ord_plot_rarefied_mucosa_com.png")
+
+### common samples fecal Dx
+set.seed(1022)
+p4 <- plot_ordination(fecal1, ordinate(fecal1, "MDS"), color = "Dx") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+ggsave(p4, file = "ord_plot_rarefied_fecal_com.png")
+############################################
+### common samples mucosa  ## Severity
+set.seed(1022)
+p5 <- plot_ordination(mucosal1, ordinate(mucosal1, "MDS"), color = "BSQ_OverallSx") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+ggsave(p5, file = "ord_plot_rarefied_mucosa_com_BSQ_OverallSx.png")
+
+### common samples fecal ## Severity
+set.seed(1022)
+p6 <- plot_ordination(fecal1, ordinate(fecal1, "MDS"), color = "BSQ_OverallSx") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+ggsave(p6, file = "ord_plot_rarefied_fecal_com_BSQ_OverallSx.png")
+#####################################
+### common samples mucosa  ## abdominal pain
+set.seed(1022)
+p7 <- plot_ordination(mucosal1, ordinate(mucosal1, "MDS"), color = "BSQ_AbdPain") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+ggsave(p7, file = "ord_plot_rarefied_mucosa_com_abd_pain.png")
+
+### common samples fecal ## abdominal pain
+set.seed(1022)
+p8 <- plot_ordination(fecal1, ordinate(fecal1, "MDS"), color = "BSQ_AbdPain") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+ggsave(p8, file = "ord_plot_rarefied_fecal_com_abd_pain.png")
+
+# just the ones that are different
+sig = subset_taxa(PS2, row.names(tax_table(PS2)) %in% row.names(sigtab))
+plot_ordination(sig, ordinate(sig, "MDS"), color = "Dx") + geom_point(size = 3) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 3, vjust = -1.5)
+
+# 
+#  [1] "296945"  "1111294" "349809"  "71331"   "362608"  "568118"  "591785"  "366147"  "315430"  "315846"  "365385" 
+# [12] "1017181" "564941"  "330294"  "185659"  "916143"  "659361" 
+
+
+# sig = subset_taxa(PS3, row.names(tax_table(PS3)) %in% c("296945","1111294","349809", "71331","362608","568118","591785"))
+# plot_ordination(sig, ordinate(sig, "MDS"), color = "Dx", axes=c(1,2)) + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+
+```
+
+
+```{r}
+table(sample_data(mucosal1)$Dx)
+table(sample_data(mucosal1)$Dx,sample_data(mucosal1)$Sex)
+mean(subset(sample_data(mucosal1), sample_data(mucosal1)$Dx == "IBS")$Age, na.rm = TRUE)
+mean(subset(sample_data(mucosal1), sample_data(mucosal1)$Dx == "HC")$Age, na.rm = TRUE)
+mean(subset(sample_data(mucosal1), sample_data(mucosal1)$Dx == "IBS")$BSQ_OverallSx, na.rm = TRUE)
+mean(subset(sample_data(mucosal1), sample_data(mucosal1)$Dx == "IBS")$BSQ_AbdPain, na.rm = TRUE)
+```
+
+table(sample_data(PS2)$Dx,sample_data(PS2)$Sex)
+mean(subset(sample_data(PS2), sample_data(PS2)$Dx == "IBS")$Age, na.rm = TRUE)
+mean(subset(sample_data(PS2), sample_data(PS2)$Dx == "HC")$Age, na.rm = TRUE)
+mean(subset(sample_data(PS2), sample_data(PS2)$Dx == "IBS")$BSQ_OverallSx, na.rm = TRUE)
+mean(subset(sample_data(PS2), sample_data(PS2)$Dx == "IBS")$BSQ_AbdPain, na.rm = TRUE)
+
+# Phyloseq to Deseq
+# we filtered the OUTs and transformed to get a PS2 object, however, we would like to work with counts and not fractions of abundance swith DESEq, however, we would also lake to keep the filetered numbers
+```{r}
+# Remove taxa not seen more than 3 times in at least 20% of the samples. This helps protect against an OTU with small mean & trivially large Coefficient of Variation. Save this as new phyloseq data object, PS. 
+
+PS = filter_taxa(physeq, function(x) sum(x > 3) > (0.2 * length(x)), 
+    TRUE)
+PS3 <- filter_taxa(PS, function(x) sd(x)/mean(x) > 3, TRUE)
+set.seed(1022)
+phy1 <- rarefy_even_depth(PS3)
+
+phy1
+```
+#1 Group
+```{r}
+# phylum level
+phylum_glom<-tax_glom(PS3, taxrank="Phylum")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab1 = res[which(res$padj < alpha), ]
+sigtab1 = cbind(as(sigtab1, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab1), ], "matrix"))
+head(sigtab1)
+
+# class level
+phylum_glom<-tax_glom(PS3, taxrank="Class")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab2 = res[which(res$padj < alpha), ]
+sigtab2 = cbind(as(sigtab2, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab2), ], "matrix"))
+head(sigtab2)
+
+# Order level
+phylum_glom<-tax_glom(PS3, taxrank="Order")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab3 = res[which(res$padj < alpha), ]
+sigtab3 = cbind(as(sigtab3, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab3), ], "matrix"))
+sigtab3
+
+# Family level
+phylum_glom<-tax_glom(PS3, taxrank="Family")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab4 = res[which(res$padj < alpha), ]
+sigtab4 = cbind(as(sigtab4, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab4), ], "matrix"))
+sigtab4
+
+# Genus level
+phylum_glom<-tax_glom(PS3, taxrank="Genus")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab5 = res[which(res$padj < alpha), ]
+sigtab5 = cbind(as(sigtab5, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab5), ], "matrix"))
+
+
+# Species level
+phylum_glom<-tax_glom(PS3, taxrank="Species")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab6 = res[which(res$padj < alpha), ]
+sigtab6 = cbind(as(sigtab6, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab6), ], "matrix"))
+sigtab6
+
+# OTU level
+# sample_data(PS3)$Group<- as.factor(sample_data(PS3)$Group)
+# sample_data(PS3)$Group <- relevel(sample_data(PS3)$Group, ref = "1")
+diagdds = phyloseq_to_deseq2(PS3, ~ Group)
+# calculate geometric means prior to estimate size factors
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab7 = res[which(res$padj < alpha), ]
+sigtab7 = cbind(as(sigtab7, "data.frame"), as(tax_table(PS3)[rownames(sigtab7), ], "matrix"))
+sigtab7
+
+sigtab <- rbind(sigtab1,sigtab2,sigtab3,sigtab4,sigtab5,sigtab6,sigtab7)
+write.csv(sigtab, file = "sig_adjP_Group_All_Taxa_levels_Feces.csv")
+```
+# visualize OTUs that were significantly different between Groups
+```{r}
+theme_set(theme_bw())
+
+# Phylum order
+x = tapply(sigtab$log2FoldChange, sigtab$Phylum, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Phylum = factor(as.character(sigtab$Phylum), levels=names(x))
+# Genus order
+x = tapply(sigtab$log2FoldChange, sigtab$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Genus = factor(as.character(sigtab$Genus), levels=names(x))
+sigtab$Abundance <- sigtab$baseMean
+p <- ggplot(sigtab, aes(x=Genus, y=log2FoldChange, color=Phylum, size = as.numeric(Abundance))) + geom_point() + theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) 
+
+ggsave(p, file = "log2Foldchange_phylum_Dx_feces.png")
+```
+Procrustes analysis
+
+```{r}
+
+# make an object with common otus
+OTUs.fec <- row.names(tax_table(fecal1))
+OTUs.muc <- row.names(tax_table(mucosal1))
+comOTUs <- OTUs.fec[OTUs.fec%in%OTUs.muc]
+length(comOTUs)
+fecal1Com = prune_taxa(comOTUs, fecal1)
+mucosal1Com = prune_taxa(comOTUs, mucosal1)
+
+# correlation plots between mucosal and fecal microbiome
+
+
+# procrustes {vegan}
+library(vegan)
+biop.otu <- otu_table(mucosal1Com)
+biop.sample <- sample_data(mucosal1Com)
+fec.otu <-  otu_table(fecal1Com)
+biop.dist <- vegdist(t(otu_table(mucosal1Com)))
+fec.dist <- vegdist(t(otu_table(fecal1Com)))
+
+
+library(MASS)
+mds.muc <- isoMDS(biop.dist)
+mds.fec <- isoMDS(fec.dist)
+
+muc_fec_proc <- procrustes(mds.muc, mds.fec, scale = TRUE,scores = "sites",symmetric = TRUE, truemean = TRUE)
+summary(muc_fec_proc)
+plot(muc_fec_proc)
+points(muc_fec_proc, display = c("target", "rotated"))
+# ordiplot(muc_fec_proc)
+
+plot(muc_fec_proc, kind=2)
+
+residuals(muc_fec_proc)
+proc.test <- protest(mds.muc,mds.fec)
+plot(proc.test)
+fit1 <- fitted(muc_fec_proc, truemean = TRUE)
+ordiplot(biop.dist)
+
+
+fec.pca <- rda(fec.otu)
+plot(fec.pca)
+muc.pca <- rda(biop.otu)
+plot(muc.pca)
+biplot(muc.pca, scaling = -1)
+
+#################################
+
+mds1 = metaMDS (biop.dist, fec.dist, trymax = 100)
+
+
+muc.mds = metaMDS (biop.otu, k =2, trymax = 100)
+predict(fec.mds, newdata=scores(muc.mds, "species"))
+
+rot.fec <- muc_fec_proc$Yrot
+plot_ordination(rot.fec, color = biop.sample$Dx + geom_point(size = 5)) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+
+```
+
+```{r}
+library(ggplot2)
+library(grid)
+
+ctest <- data.frame(rda1=proc.test$Yrot[,1],rda2=proc.test$Yrot[,2],xrda1=proc.test$X[,1],xrda2=proc.test$X[,2],Dx=biop.sample$Dx)
+
+ggplot(ctest) + geom_point(aes(x=rda1, y=rda2, colour=Dx)) +
+geom_point(aes(x=xrda1, y=xrda2, colour=Dx)) + geom_segment(aes(x=rda1,y=rda2,xend=xrda1,yend=xrda2,colour=Dx),arrow=arrow(length=unit(0.2,"cm")))
+```
+
+```{r}
+# firmicutes, clostridia
+
+PS_f <- subset_taxa(PS3, Phylum == " p__Firmicutes")
+sample_data(PS_f)$Group <- as.factor(sample_data(PS_f)$Group)
+diagdds = phyloseq_to_deseq2(PS_f, ~ as.factor(Group))
+
+# calculate geometric means prior to estimate size factors
+
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric", betaPrior=FALSE)
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(PS_f)[rownames(sigtab), ], "matrix"))
+head(sigtab)
+dim(sigtab)
+write.csv(sigtab, file = "Firmicutes_sig_adjP_Group_Feces.csv")
+PS_f_sig <- prune_taxa(row.names(sigtab), PS_f)
+
+```
+
+# visualize OTUs that were significantly different between Groups
+```{r}
+theme_set(theme_bw())
+
+# Phylum order
+x = tapply(sigtab$log2FoldChange, sigtab$Class, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Phylum = factor(as.character(sigtab$Class), levels=names(x))
+# Genus order
+x = tapply(sigtab$log2FoldChange, sigtab$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Genus = factor(as.character(sigtab$Genus), levels=names(x))
+sigtab$Abundance <- sigtab$baseMean
+p <- ggplot(sigtab, aes(x=Genus, y=log2FoldChange, color=Phylum, size = as.numeric(Abundance))) + geom_point() + theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) 
+
+ggsave(p, file = "fecal_microbiome/log2Foldchange_firmicutes_Dx_feces.png")
+```
+# Ordination plots
+
+```{r}
+
+PS.ca = ordinate(PS_f_sig, method = "CCA")
+alpha = 0.75 # transparency for plot points
+```
+# Definea a colour scale
+```{r}
+color_var = get_variable(PS_f_sig, "Group")
+color_pal = rainbow(length(levels(color_var)) + 1)
+names(color_pal) = c(levels(color_var), "taxa")
+color_pal["taxa"] = "black"
+```
+# Define a shape scale
+```{r}
+shape_var = get_taxa_unique(PS_f_sig, "Class")
+shape_scale = c(0:11)
+names(shape_scale) = c(shape_var, "samples")
+
+```
+
+```{r}
+plot_ordination(PS_f_sig, PS.ca, color = "Group") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5.0, vjust = 2)
+
+```
+
+
+```{r}
+
+# Bacteroidetes
+
+PS_b <- subset_taxa(PS3, Phylum == " p__Bacteroidetes")
+sample_data(PS_b)$Group <- as.factor(sample_data(PS_b)$Group)
+diagdds = phyloseq_to_deseq2(PS_b, ~ as.factor(Group))
+
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric", betaPrior=FALSE)
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(PS_b)[rownames(sigtab), ], "matrix"))
+head(sigtab)
+dim(sigtab)
+write.csv(sigtab, file = "bacteroidetes_sig_adjP_Group_Feces.csv")
+PS_b_sig <- prune_taxa(row.names(sigtab), PS_b)
+
+```
+
+# visualize OTUs that were significantly different between Groups
+```{r}
+theme_set(theme_bw())
+scale_fill_discrete <- function(palname = "Set1", ...) {
+    scale_fill_brewer(palette = palname, ...)
+}
+# Phylum order
+x = tapply(sigtab$log2FoldChange, sigtab$Phylum, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Phylum = factor(as.character(sigtab$Phylum), levels=names(x))
+# Genus order
+x = tapply(sigtab$log2FoldChange, sigtab$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Genus = factor(as.character(sigtab$Genus), levels=names(x))
+sigtab$Abundance <- sigtab$baseMean
+p <- ggplot(sigtab, aes(x=Genus, y=log2FoldChange, color=Family, size = as.numeric(Abundance))) + geom_point() + theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) 
+
+ggsave(p, file = "log2Foldchange_phylum_Dx_feces.png")
+```
+
+# Ordination plots
+
+```{r}
+
+PS.ca = ordinate(PS_b_sig, method = "CCA")
+alpha = 0.75 # transparency for plot points
+```
+# Definea a colour scale
+```{r}
+color_var = get_variable(PS_b_sig, "Group")
+color_pal = rainbow(length(levels(color_var)) + 1)
+names(color_pal) = c(levels(color_var), "taxa")
+color_pal["taxa"] = "black"
+```
+# Define a shape scale
+```{r}
+shape_var = get_taxa_unique(PS_b_sig, "Class")
+shape_scale = c(0:11)
+names(shape_scale) = c(shape_var, "samples")
+
+```
+
+```{r}
+plot_ordination(PS_b_sig, PS.ca, color = "Group") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+
+```
+## Association with differentially abundant OUTs within Firmicutes Phylum
+
+```{r}
+df0 <- otu_table(PS3)[row.names(otu_table(PS3))%in%row.names(sigtab),]
+df0 <- df0[row.names(sigtab),]
+match(row.names(as.matrix(sample_data(PS3))), colnames(df0))
+sample_data(PS3)$Group <- as.factor(sample_data(PS3)$Group)
+df1 <- cbind(t(df0), as.data.frame(sample_data(PS3)$Group))
+colnames(df1) <- c(paste(paste(tax_table(PS3)[row.names(tax_table(PS3))%in%row.names(sigtab),2],tax_table(PS3)[row.names(tax_table(PS3))%in%row.names(sigtab),6], sep="__"),colnames(df1)[1:14], sep = "_"), "Group")
+colnames(df1) <- gsub(" ","", colnames(df1))
+
+for ( i in 1:14) {
+# df2<-aggregate(df1[,i], by=list(df1[,15]), FUN=mean)
+# colnames(df2) <- c("Group",colnames(df1)[i])
+p <- ggplot(df1, aes(x=df1[,15], y=df1[,i]) )
+q <- p + geom_jitter(size =3, width = 0.25) + geom_text(label = substr(row.names(df1),7,11))  + xlab("Dx") + ylab(colnames(df1)[i])
+ggsave(q, file=paste(colnames(df1)[i],"Dx.png", sep = "_"))
+}
+
+# some samples have outliers which when removed may give a better picture
+
+p <- ggplot(df1, aes(x=df1[,15], y=df1[,1]) )
+q <- p + geom_jitter(size =3, width = 0.25) + xlab("Dx") + ylab(colnames(df1)[1]) + scale_y_continuous(limits = c(0, 200)) + geom_text(label = substr(row.names(df1),7,11)) 
+ggsave(q, file=paste(paste(colnames(df1)[1], sep = "_"),"Dx_1hc_outlier_rem.png", sep = "_"))
+
+
+p <- ggplot(df1, aes(x=df1[,15], y=df1[,2]) )
+q <- p + geom_jitter(size =3, width = 0.25) + xlab("Dx") + ylab(colnames(df1)[2]) + scale_y_continuous(limits = c(0, 100)) + geom_text(label = substr(row.names(df1),7,11)) 
+ggsave(q, file=paste(paste(colnames(df1)[2], sep = "_"),"Dx_1hc_outlier_rem.png", sep = "_"))
+labels1 <- subset(df1, df1[,2]>12.5 & df1[,15] == 2)
+substr(row.names(labels1),7,11)
+# "A6216" "A6214" "A6253" "A6114" "A6210" "A6116" "A6343" "A5839"
+
+
+p <- ggplot(df1, aes(x=df1[,15], y=df1[,3]) )
+q <- p + geom_jitter(size =3, width = 0.25) + xlab("Dx") + ylab(colnames(df1)[3]) + scale_y_continuous(limits = c(0, 200)) + geom_text(label = substr(row.names(df1),7,11)) 
+ggsave(q, file=paste(paste(colnames(df1)[3], sep = "_"),"Dx_1ibs_outlier_rem.png", sep = "_"))
+labels1 <- subset(df1, df1[,3]>25 & df1[,15] == 2)
+substr(row.names(labels1),7,11)
+# "A6216" "A6165" "A6242" "A6182" "A6214" "A6253" "A6079" "A6133" "A6114" "A6393" "A6289" "A5839"
+
+# 4 has 3 points with high expression, 5 is higher in some HCs, 6 almost looks the same, 
+p <- ggplot(df1, aes(x=df1[,15], y=df1[,7]) )
+q <- p + geom_jitter(size =3, width = 0.25) + xlab("Dx") + ylab(colnames(df1)[7]) + scale_y_continuous(limits = c(0, 2000)) + geom_text(label = substr(row.names(df1),7,11)) 
+ggsave(q, file=paste(paste(colnames(df1)[7], sep = "_"),"Dx_1hc_outlier_rem.png", sep = "_"))
+labels1 <- subset(df1, df1[,7]>25 & df1[,15] == 2)
+substr(row.names(labels1),7,11)
+# [1] "A6337" "A6242" "A6274" "A6253" "A6130" "A6099" "A6390" "A5839"
+
+#8, 9 no new cutoff
+p <- ggplot(df1, aes(x=df1[,15], y=df1[,10]) )
+q <- p + geom_jitter(size =3, width = 0.25) + xlab("Dx") + ylab(colnames(df1)[10]) + scale_y_continuous(limits = c(0, 5000)) + geom_text(label = substr(row.names(df1),7,11)) 
+ggsave(q, file=paste(paste(colnames(df1)[10], sep = "_"),"Dx_1hc_2IBS_outlier_rem.png", sep = "_"))
+labels1 <- subset(df1, df1[,10]>500 & df1[,15] == 2)
+substr(row.names(labels1),7,11)
+# [1] "A6081" "A6337" "A6182" "A6214" "A6253" "A6113" "A6079" "A6133" "A6116"
+
+# 
+p <- ggplot(df1, aes(x=df1[,15], y=df1[,11]) )
+q <- p + geom_jitter(size =3, width = 0.25) + xlab("Dx") + ylab(colnames(df1)[11]) + scale_y_continuous(limits = c(0, 3000)) + geom_text(label = substr(row.names(df1),7,11)) 
+ggsave(q, file=paste(paste(colnames(df1)[11], sep = "_"),"Dx_1IBS_2IBS_outlier_rem.png", sep = "_"))
+labels1 <- subset(df1, df1[,11]>300 & df1[,15] == 2)
+substr(row.names(labels1),7,11)
+# [1] "A6216" "A6165" "A6420" "A6182" "A6091" "A6116" "A6343" "A6390" "A5839" "A6264" "A6095"
+
+#12 no outliers removed #13 no clear direction #14 no differnce
+
+# Interesting clostridia are, # 2, 3, 7, 10, 11
+
+
+df4 <- cbind(df1, as.data.frame(sample_data(PS3)[,c(6:28, 30:78,99)]))
+df4$Clean1 <- gsub("Clean", 1, df4$Clean)
+df4$Clean1 <- as.numeric(as.character(df4$Clean1))
+df5 <- subset(df4, df4$Group == 2)
+df5$Group <- NULL
+df5$HAD_DepressionDef <- NULL
+df5$Clean <- NULL
+df5$Probiotic1 <- NULL
+df5$Probiotic1_dose <-NULL
+df5$OW_Status<- as.numeric(as.character(df5$OW_Status))
+df5[,c(19,27:28,30:35,52,45,18,85)]<- sapply(df5[,c(19,27:28,30:35,52,45,18,85)],as.numeric)
+df5$Group.1 <- NULL
+p.traits1<-matrix(NA, nrow=85, ncol=1)
+for ( i in 15: 85)
+{p.traits1[i,1]<-summary(lm(df5[,3] ~ df5[,i]))$coefficients[,4][2]}
+row.names(p.traits1)<-colnames(df5)
+subset(p.traits1, p.traits1 [,1] < 0.05)
+
+# BSQ_UsualSeverity 6.898284e-06
+# write.table(p.traits1, file="TraitsIbsClusters_lm.csv", col.names=NA, sep=",")
+
+p <- ggplot(df5, aes(x=df5$ACE_Score, y=df5[,12]) )
+q <- p + geom_jitter(size =3, width = 0.25) + xlab("ACE_Score") + ylab(colnames(df5)[12])  + geom_text(label = substr(row.names(df5),7,11)) +scale_y_continuous(limits = c(0, 25))
+q
+
+```
+
+```{r}
+# Linear discriminant analysis with 5 markers of clostridium-related OUTs
+plot(lda.df$Group,lda.df$p__Firmicutes__g___362078)
+library(MASS)
+lda.df <- df1[,c(3,7,10,11,15)]
+lda1 <- lda(Group~., data = lda.df)
+pre.lda <- predict(lda1)
+ldahist(data = pre.lda$x[,1], g=pre.lda$class)
+plot(pre.lda$class, pre.lda$x[,1])
+lda.df$Pred.Group <- ifelse(pre.lda$posterior[,1]>pre.lda$posterior[,2],1,2)
+```
+PiCRUST or tax4fun 
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/Phyloseq_workflow/fecal_microbiome/")
+header1<-scan("SCOR_feces_non_rarefied_taxonomy_reformatted.txt", nlines = 2, what = character())[8:83]
+genus=read.table("SCOR_feces_non_rarefied_taxonomy_reformatted.txt", sep="\t", row.names = 1)	
+names(genus)<-header1
+genus1 <- genus[,-dim(genus)[2]]
+
+# taxanomic data
+
+
+library("Tax4Fun")
+otu.qiime <- importQIIMEBiomData("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/Phyloseq_workflow/Tax4Fun_analysis/merged_otu_table_json.biom")
+tax_fun <- Tax4Fun(otu.qiime, "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/Phyloseq_workflow/Tax4Fun_analysis/SILVA115/")
+```
+

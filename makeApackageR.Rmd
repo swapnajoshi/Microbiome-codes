@@ -1,0 +1,26 @@
+---
+title: "makeApackageR"
+author: "Swapna Mahurkar-Joshi"
+date: "June 22, 2016"
+output: word_document
+---
+
+```{r}
+install.packages("devtools")
+library("devtools")
+devtools::install_github("klutometis/roxygen")
+library(roxygen2)
+```
+
+Step 1: Create your package directory
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/Swapna_packages/")
+create("miRNAeAnalysis")
+```
+
+```{r}
+
+
+```
+
+miRNAeAnalysis <- 

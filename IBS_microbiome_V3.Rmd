@@ -1,0 +1,1593 @@
+---
+title: "IBS_microbiome_V3"
+author: "Swapna Mahurkar-Joshi"
+date: "June 22, 2016"
+output: word_document
+---
+
+
+
+content: merged batch 1 and batch 2 seq ( reseq); microbiome - miRNA integration full 
+
+# Libraries
+```{r, message = FALSE}
+# install dada 2 package dev tools 
+
+source("http://bioconductor.org/biocLite.R")
+biocLite(suppressUpdates = FALSE)
+biocLite("ade4", suppressUpdates = FALSE)
+
+# biocLite("devtools")
+# library("devtools")
+# devtools::install_github("benjjneb/dada2")
+# library(dada2)
+library(phyloseq)
+library("ggplot2")
+library("scales")
+library("grid")
+library("ape")
+library(phytools)
+#WGCNA
+library(WGCNA)
+library(flashClust)
+#Heatmap
+library(dplyr)
+library(NMF)
+library(RColorBrewer)
+# differntial abundance
+library("DESeq2")
+library("data.table")
+library(FunctionsAndLibrariesSJ)
+
+```
+# Data import
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/phyloseq_workflow") 
+# otu table
+header1<-scan("merged_otu_table.txt", nlines = 1, what = character())[3:88]
+genus=read.table("merged_otu_table.txt", sep="\t", check.names = FALSE, row.names = 1)	
+colnames(genus)<-header1
+genus1 <- genus[,-dim(genus)[2]]
+colnames(genus1) <- gsub("A5169Biopsy", "Biopsy.A5169", colnames(genus1))
+colnames(genus1) <- gsub("A6244Biopsy", "Biopsy.A6244", colnames(genus1))
+colnames(genus1) <- gsub("A5501Biopsy", "Biopsy.A5501", colnames(genus1))
+colnames(genus1) <- gsub("A6379Biopsy","Biopsy.A6379", colnames(genus1))
+colnames(genus1) <- substr(colnames(genus1),8,12)
+taxa_mat <- tax(row.names(genus1), as.character(genus$ConsensusLineage))
+otus <- otu_table(genus1, taxa_are_rows = TRUE)
+
+# # taxanomic data
+# tax <- function(d,x) {y <-strsplit(x, ";")
+# z <- matrix(unlist(y), nrow = length(x), ncol = 7, byrow = TRUE)
+# rownames(z) <- d
+# colnames(z) <- c("Kingdom","Phylum","Class", "Order","Family", "Genus", "Species")
+# return(z)
+# }
+
+
+tax1 <- tax_table(taxa_mat)
+
+# metadata
+
+# metadata
+traits_mat <- read.csv("mapping.bray_curtis.csv", sep = ",", row.names = 1)
+traits_mat$Sex <- as.factor(traits_mat$Sex)
+traits_mat$BH <- as.factor(traits_mat$BH)
+traits_mat$Group <- as.factor(traits_mat$Group)
+traits_mat$Dx_Gender_interaction <- interaction(traits_mat$Group, traits_mat$Gender)
+row.names(traits_mat) <- gsub("A5169Biopsy", "Biopsy.A5169", row.names(traits_mat))
+row.names(traits_mat) <- gsub("A6244Biopsy", "Biopsy.A6244", row.names(traits_mat))
+row.names(traits_mat) <- gsub("A5501Biopsy", "Biopsy.A5501", row.names(traits_mat))
+row.names(traits_mat) <- gsub("A6379Biopsy","Biopsy.A6379", row.names(traits_mat))
+row.names(traits_mat) <- substr(row.names(traits_mat),8,12)
+traits_mat <- traits_mat[colnames(genus1),]
+match(row.names(traits_mat), colnames(genus1))
+traits <- sample_data(traits_mat)
+
+# phylogenic tree
+tree1 <- read_tree_greengenes("97_otus.tree")
+class(tree1)
+# x <- read.newick(file="97_otus.tree")
+# tree1 <- phy_tree(x)
+# is.rooted(tree1)
+# tree2 = root(tree1, 1, resolve.root = T)
+# any(tree1$tip.label == "'OTU1100'")
+ntaxa(tree1)
+# phyloseq object
+physeq = phyloseq(otus, tax1, traits, tree1)
+physeq
+
+save(taxa_mat, file = "taxa_mat.Rda")
+save(traits_mat, file = "traits_mat.Rda")
+save(genus1, file = "genus1.Rda")
+save(physeq, file = "physeq.Rda")
+
+```
+Before filtering or trimming estimate richness (aplha diversity), since it depends very much on singletons
+```{r}
+rich <- estimate_richness(physeq, split = TRUE, measures = NULL)
+rich$Dx <- sample_data(physeq)$Dx
+col.rich <- colnames(rich)
+# [1] "Observed"   "Chao1"      "se.chao1"   "ACE"        "se.ACE"     "Shannon"    "Simpson"    "InvSimpson" "Fisher"     "Dx" 
+rich$se.chao1 <- NULL
+rich$se.ACE <- NULL
+
+fit1 <- lm(Observed ~ Dx, data = rich)
+pvalue <- function(x){summary(x)$coefficients[2,4]}
+rsquared <- function(x){summary(x)$ r.squared}
+pvalue(fit1)
+rsquared(fit1)
+
+lm.stats.tab <- matrix(NA, nrow = 7, ncol=2)
+row.names(lm.stats.tab) <- colnames(rich)[1:7]
+colnames(lm.stats.tab) <- c("RSquared", "P value")
+
+for (i in 1:7)
+{
+  fit1 <- lm(rich[,i] ~ Dx, data = rich)
+  lm.stats.tab[i,1] <- round(rsquared(fit1),2)
+  lm.stats.tab[i,2] <- round(pvalue(fit1),2)
+}
+lm.stats.tab
+p <- plot_richness(physeq, "Dx", "BH")
+p + geom_boxplot(data=p$data, aes(x=Dx, y=value, color=NULL), alpha=0.1) 
+lm.stats.tab[,2]
+
+####### alpha diversity is not significantly different bewteen IBS and HCs' although a lower chao index is seen in IBS.
+```
+
+Initial exploration of data
+
+```{r}
+
+#Summarize sequencing depths, in general and by category
+sdt = data.table(as(sample_data(physeq), "data.frame"),TotalReads = sample_sums(physeq), keep.rownames = TRUE)
+setnames(sdt, "rn", "SampleID")
+pSeqDepth = ggplot(sdt, aes(TotalReads)) + geom_histogram() + ggtitle("Sequencing Depth")
+pSeqDepth
+pSeqDepth + facet_wrap(~Dx)
+pSeqDepth + facet_wrap(~BH)
+pSeqDepth + facet_wrap(~Sex)
+```
+
+
+```{r}
+# How many singletons, doubletons
+tdt = data.table(tax_table(physeq),
+                 TotalCounts = taxa_sums(physeq),
+                 OTU = taxa_names(physeq ))
+ggplot(tdt, aes(TotalCounts)) + 
+  geom_histogram() + 
+  ggtitle("Histogram of Total Counts")
+tdt[(TotalCounts <= 0), .N]
+# 0s = 6488
+tdt[(TotalCounts <= 1), .N]
+singletons = 8058
+
+tdt[(TotalCounts <= 2), .N]
+doubletons = 8791
+
+```
+
+```{r}
+# taxa cumulative sum
+taxcumsum = tdt[, .N, by = TotalCounts]
+setkey(taxcumsum, TotalCounts)
+taxcumsum[, CumSum := cumsum(N)]
+# Define the plot
+pCumSum = ggplot(taxcumsum, aes(TotalCounts, CumSum)) + 
+  geom_point() +
+  xlab("Filtering Threshold, Minimum Total Counts") +
+  ylab("OTUs Filtered") +
+  ggtitle("OTUs that would be filtered vs. the minimum count threshold")
+pCumSum
+pCumSum + xlim(0, 100)
+
+```
+Fast melting
+```{r}
+# source("taxa_summary.R", local = TRUE)
+# mdt = fast_melt(physeq)
+mdt <- melt(otu_table(physeq))
+colnames(mdt) <- c("TaxaID","SampleID","count")
+#prevalence: number of samples in which out is observed atleast once
+prevdt = mdt[, list(Prevalence = sum(mdt$count > 0), 
+                    TotalCounts = sum(mdt$count)), 
+             by = TaxaID]
+
+```
+
+
+# Remove taxa not seen more than 3 times in at least 20% of the samples. This helps protect against an OTU with small mean & trivially large Coefficient of Variation. Save this as new phyloseq data object, PS. 
+```{r}
+PS = filter_taxa(physeq, function(x) sum(x > 3) > (0.3 * length(x)), 
+    TRUE)
+PS
+```
+# Transform abundances to the median sequencing depth.
+```{r}
+total <- median(sample_sums(PS))
+standf <- function(x, t = total) round(t * (x/sum(x)))
+PS1 <- transform_sample_counts(PS, standf)
+```
+# Filter the taxa using a cutoff of 3.0 for the Coefficient of Variation.
+```{r}
+PS2 <- filter_taxa(PS1, function(x) sd(x)/mean(x) > 3, TRUE)
+PS_b <- subset_taxa(PS2, Phylum == " p__Bacteroidetes")
+PS_f <- subset_taxa(PS2, Phylum == " p__Firmicutes")
+save(physeq, PS, PS1, PS_b, PS_f, PS2, file = "IBS_phlyoseq.RData")
+```
+
+```{r}
+figures_dir_name = "microbiome_figures"
+if (!file.exists(figures_dir_name)) {
+    dir.create(figures_dir_name)
+}
+theme_set(theme_bw())
+```
+# Ordination plots
+```{r}
+PS.ca = ordinate(PS2, method = "CCA")
+alpha = 0.75 # transparency for plot points
+```
+# Definea a colour scale
+```{r}
+color_var = get_variable(PS2, "Dx")
+color_pal = rainbow(length(levels(color_var)) + 1)
+names(color_pal) = c(levels(color_var), "taxa")
+color_pal["taxa"] = "black"
+```
+# Define a shape scale
+```{r}
+shape_var = get_taxa_unique(PS2, "Class")
+shape_scale = c(0:11)
+names(shape_scale) = c(shape_var, "samples")
+
+```
+
+```{r}
+p1 = plot_ordination(PS2, PS.ca, "samples", color="Dx", title="Ordination") 
+q = p1 + geom_point(size = 4)
+q
+ggsave("microbiome_figures/Dx_ordination_plots.png",q)
+
+```
+
+
+```{r}
+# # Perform NMDS on unweighted and weighted UniFrac distance. 
+# PS2.UUF = distance(PS2, "unifrac", weighted = FALSE)
+# PS2.WUF = distance(PS2, "unifrac", weighted = TRUE)
+# 
+# PS2.NMDS1 = ordinate(PS2, "NMDS", PS2.UUF)
+# p1 = plot_ordination(PS2, PS2.NMDS1, "samples", color = "Dx", title = "plot_ordination, NMDS, UUF")
+# q = p1 + geom_point(size = 4)
+# q
+# ggsave("microbiome_figures/Dx_ordination_plots_UUF.png",q)
+# PS2.NMDS2 = ordinate(PS2, "NMDS", PS2.WUF)
+# p1 = plot_ordination(PS2, PS2.NMDS2, "samples", color = "Dx", title = "plot_ordination, NMDS, WUF")
+# q = p1 + geom_point(size = 4)
+# q
+# ggsave("microbiome_figures/Dx_ordination_plots_WUF.png",q)
+```
+
+# Heatmaps
+```{r}
+title = "plot_heatmap; bray-curtis, NMDS"
+p2 = plot_heatmap(PS2, "NMDS", "bray", "Dx", trans = log_trans(10), 
+    title = title)
+p2 = p2 + theme(axis.text.x = element_text(size = 10, angle = -90, hjust = 0))
+p2
+ggsave("microbiome_figures/plot_heatmap; bray-curtis, NMDS.png",p2)
+```
+# plot network
+```{r}
+plot_net(PS2, distance = "unifrac", type = "samples", maxdist = 0.8,
+color = "Group", shape = NULL,
+rescale = TRUE, point_size = 5, point_alpha = 1, point_label = 1,
+hjust = 1.35, title = NULL)
+
+p <- plot_net(PS2, maxdist=0.8, color="Dx", shape="Sex")
+ggsave("microbiome_figures/plot_network.png",p)
+```
+# plot cluster trees
+```{r}
+title = "plot_tree_Bacteroidetes; Merged samples, tip_glom=0.1"
+phy_tree(PS_b)$node.label = substr(phy_tree(PS_b)$node.label, 1, 4)
+head(phy_tree(PS_b)$node.label)
+b <- plot_tree(PS_b, "sampledodge", nodeplotboot(), "Family", "Group", "abundance", 
+    title = title, ladderize = "left")
+ggsave("microbiome_figures/plot_tree_Bacteroidetes.png",b)
+
+title = "plot_tree_Firmicutes; Merged samples, tip_glom=0.1"
+phy_tree(PS_f)$node.label = substr(phy_tree(PS_f)$node.label, 1, 4)
+head(phy_tree(PS_f)$node.label)
+b <- plot_tree(PS_f, "sampledodge", nodeplotboot(), "Family", "Group", "abundance", 
+    title = title, ladderize = "left")
+ggsave("microbiome_figures/plot_tree_Firmicutes.png",b)
+```
+#very dense, consolidate data
+
+```{r}
+# Bacteroidetes
+p1 <- plot_tree(PS_b, color="Dx", shape="Dx", label.tips="Family", size="Abundance")
+ggsave("microbiome_figures/plot_tree_bacteroidetes_family_Dx.png",p1)
+p2 <- plot_tree(PS_b, color="Sex", shape="Group", label.tips="Family", size="Abundance")
+ggsave("microbiome_figures/plot_tree_bacteroidetes_family_Dx_sex.png",p2)
+p3 <- plot_tree(PS_b, color="BH",label.tips="Family", size="Abundance")
+ggsave("microbiome_figures/plot_tree_bacteroidetes_family_BH.png",p3)
+
+# Firmicutes
+p1 <- plot_tree(PS_f, color="Dx", shape="Dx", label.tips="Family", size="Abundance")
+ggsave("microbiome_figures/plot_tree_firmicutes_family_Dx.png",p1)
+p2 <- plot_tree(PS_f, color="Sex", shape="Group", label.tips="Family", size="Abundance")
+ggsave("microbiome_figures/plot_tree_firmicutes_family_Dx_sex.png",p2)
+p3 <- plot_tree(PS_f, color="BH",label.tips="Family", size="Abundance")
+ggsave("microbiome_figures/plot_tree_firmicutes_family_BH.png",p3)
+```
+# abundance
+```{r}
+title = "plot_bar"
+p4 = plot_bar(PS2, "Group", "Abundance", "Phylum", title = title)
+ggsave("microbiome_figures/bar_plot_phylum_Dx.png",p4)
+
+p4 = plot_bar(PS2, "Group", "Abundance", "Order", title = title)
+ggsave("microbiome_figures/bar_plot_Order_Dx.png",p4)
+
+p4 = plot_bar(PS2, "Group", "Abundance", "Family", title = title)
+ggsave("microbiome_figures/bar_plot_Family_Dx.png",p4)
+
+p4 = plot_bar(PS2, "Group", "Abundance", "Genus", title = title)
+ggsave("microbiome_figures/bar_plot_Genus_Dx.png",p4)
+
+p4 = plot_bar(PS2, "Group", "Abundance", "Species", title = title)
+ggsave("microbiome_figures/bar_plot_Species_Dx.png",p4)
+
+```
+# Richness
+## Differences in richness between disease groups
+```{r}
+p1 <- plot_richness(PS2, "Group", title = "plot_richness")
+q <- p1 + geom_boxplot(data = p1$data, aes(x = Group, y = value, color = Group), alpha = 0.1)
+ggsave("microbiome_figures/Richness_Dx.png",q)
+```
+## Differences in richness between bowel habit subtypes
+```{r}
+p <- plot_richness(PS2, x = "as.factor(BH)")
+q <- p + geom_boxplot(data = p$data, aes(x = as.factor(BH), y = value, color = as.factor(BH)), alpha = 0.1)
+ggsave(q, file ="microbiome_figures/richness_bowelhabits.png")
+q
+```
+## Differences in richness between sex
+```{r}
+p <- plot_richness(PS2, x = "as.factor(Gender)")
+q <- p + geom_boxplot(data = p$data, aes(x = as.factor(Gender), y = value, color = Sex), alpha = 0.1)
+ggsave(q, file ="microbiome_figures/richness_Sex.png")
+q
+```
+## Differences in richness interaction between IBS and Sex
+```{r}
+p <- plot_richness(PS2, x = "Dx_Gender_interaction")
+q <- p + geom_boxplot(data = p$data, aes(x = as.factor(Dx_Gender_interaction), y = value, color = Dx_Gender_interaction), alpha = 0.1)
+ggsave(q, file ="microbiome_figures/richness_interaction_Dx_sex.png")
+q
+```
+# Abundance bar plots
+```{r}
+
+#Phylum level Group
+Sort_OTUs = names(sort(taxa_sums(PS2), TRUE)[1:20])
+phy5 = prune_taxa(Sort_OTUs, PS2)
+sample_data(phy5)$Group <- gsub("IBS","2", sample_data(phy5)$Group)
+sample_data(phy5)$Group <- gsub("HC","1", sample_data(phy5)$Group)
+png("AbundanceBarPlot_top6_Group.png", height = 3000, width = 3500, res = 200)
+plot_bar(phy5, "Group", fill = "Group",facet_grid = ~Phylum)
+dev.off()
+plot_bar(phy5, "Group", fill = "Group",facet_grid = ~Phylum)
+
+
+#Phylum level BH
+png("AbundanceBarPlot_top6_BH.png", height = 3000, width = 3500, res = 200)
+plot_bar(phy5, "BH", fill = "BH",facet_grid = ~Phylum)
+dev.off()
+plot_bar(phy5, "BH", fill = "BH",facet_grid = ~Phylum)
+
+#GEnus level
+TopNOTUs = names(sort(taxa_sums(PS2), TRUE)[1:10])
+ent10 = prune_taxa(TopNOTUs, PS2)
+png("BarPlot_top10_Group.png", height = 3000, width = 3500, res = 200)
+plot_bar(ent10, "Group", fill = "Genus",facet_grid = ~Genus)
+dev.off()
+plot_bar(ent10, "Group", fill = "Genus",facet_grid = ~Genus)
+
+```
+#Relative abundance plots
+```{r}
+# create a dataframe with summary data
+summarySE <- function(data=NULL, measurevar, groupvars=NULL, na.rm=FALSE,
+                      conf.interval=.95, .drop=TRUE) {
+    library(plyr)
+
+    # New version of length which can handle NA's: if na.rm==T, don't count them
+    length2 <- function (x, na.rm=FALSE) {
+        if (na.rm) sum(!is.na(x))
+        else       length(x)
+    }
+
+    # This does the summary. For each group's data frame, return a vector with
+    # N, mean, and sd
+    datac <- ddply(data, groupvars, .drop=.drop,
+      .fun = function(xx, col) {
+        c(N    = length2(xx[[col]], na.rm=na.rm),
+          mean = mean   (xx[[col]], na.rm=na.rm),
+          sd   = sd     (xx[[col]], na.rm=na.rm)
+        )
+      },
+      measurevar
+    )
+
+    # Rename the "mean" column    
+    datac <- rename(datac, c("mean" = measurevar))
+
+    datac$se <- datac$sd / sqrt(datac$N)  # Calculate standard error of the mean
+
+    # Confidence interval multiplier for standard error
+    # Calculate t-statistic for confidence interval: 
+    # e.g., if conf.interval is .95, use .975 (above/below), and use df=N-1
+    ciMult <- qt(conf.interval/2 + .5, datac$N-1)
+    datac$ci <- datac$se * ciMult
+
+    return(datac)
+}
+
+
+
+
+normDataWithin <- function(data=NULL, idvar, measurevar, betweenvars=NULL,
+                           na.rm=FALSE, .drop=TRUE) {
+    library(plyr)
+
+    # Measure var on left, idvar + between vars on right of formula.
+    data.subjMean <- ddply(data, c(idvar, betweenvars), .drop=.drop,
+     .fun = function(xx, col, na.rm) {
+        c(subjMean = mean(xx[,col], na.rm=na.rm))
+      },
+      measurevar,
+      na.rm
+    )
+
+    # Put the subject means with original data
+    data <- merge(data, data.subjMean)
+
+    # Get the normalized data in a new column
+    measureNormedVar <- paste(measurevar, "_norm", sep="")
+    data[,measureNormedVar] <- data[,measurevar] - data[,"subjMean"] +
+                               mean(data[,measurevar], na.rm=na.rm)
+
+    # Remove this subject mean column
+    data$subjMean <- NULL
+
+    return(data)
+}
+
+
+
+
+
+summarySEwithin <- function(data=NULL, measurevar, betweenvars=NULL, withinvars=NULL,
+                            idvar=NULL, na.rm=FALSE, conf.interval=.95, .drop=TRUE) {
+
+  # Ensure that the betweenvars and withinvars are factors
+  factorvars <- vapply(data[, c(betweenvars, withinvars), drop=FALSE],
+    FUN=is.factor, FUN.VALUE=logical(1))
+
+  if (!all(factorvars)) {
+    nonfactorvars <- names(factorvars)[!factorvars]
+    message("Automatically converting the following non-factors to factors: ",
+            paste(nonfactorvars, collapse = ", "))
+    data[nonfactorvars] <- lapply(data[nonfactorvars], factor)
+  }
+
+  # Get the means from the un-normed data
+  datac <- summarySE(data, measurevar, groupvars=c(betweenvars, withinvars),
+                     na.rm=na.rm, conf.interval=conf.interval, .drop=.drop)
+
+  # Drop all the unused columns (these will be calculated with normed data)
+  datac$sd <- NULL
+  datac$se <- NULL
+  datac$ci <- NULL
+
+  # Norm each subject's data
+  ndata <- normDataWithin(data, idvar, measurevar, betweenvars, na.rm, .drop=.drop)
+
+  # This is the name of the new column
+  measurevar_n <- paste(measurevar, "_norm", sep="")
+
+  # Collapse the normed data - now we can treat between and within vars the same
+  ndatac <- summarySE(ndata, measurevar_n, groupvars=c(betweenvars, withinvars),
+                      na.rm=na.rm, conf.interval=conf.interval, .drop=.drop)
+
+  # Apply correction from Morey (2008) to the standard error and confidence interval
+  #  Get the product of the number of conditions of within-S variables
+  nWithinGroups    <- prod(vapply(ndatac[,withinvars, drop=FALSE], FUN=nlevels,
+                           FUN.VALUE=numeric(1)))
+  correctionFactor <- sqrt( nWithinGroups / (nWithinGroups-1) )
+
+  # Apply the correction factor
+  ndatac$sd <- ndatac$sd * correctionFactor
+  ndatac$se <- ndatac$se * correctionFactor
+  ndatac$ci <- ndatac$ci * correctionFactor
+
+  # Combine the un-normed means with the normed results
+  merge(datac, ndatac)
+}
+
+
+phy.sum = tax_glom(PS2, "Phylum")
+
+
+dat1 <- cbind(as.data.frame(t(otu_table(phy.sum))), as.character(sample_data(phy.sum)$Dx), as.character(sample_data(phy.sum)$Bowel.Habit))
+colnames(dat1)[c(7,8)]<- c("Dx","BH")
+colnames(dat1)[1:6] <- tax_table(phy.sum)[,2]
+colnames(dat1)[1:6] <- gsub(" ","",colnames(dat1)[1:6])
+dat1$Subjects <-row.names(dat1)
+
+library(reshape2)
+dat1.long <- melt(dat1)
+names(dat1.long)[names(dat1.long)=="value"] <- "Abundance"
+
+tgc <- summarySE(dat1.long, measurevar="Abundance", groupvars= c("variable","Dx"))
+
+
+p <- ggplot(tgc, aes(x=variable, y=Abundance, fill=Dx)) + 
+    geom_bar(position=position_dodge(), stat="identity",
+             colour="black", # Use black outlines,
+             size=.3) +      # Thinner lines
+    geom_errorbar(aes(ymin=Abundance-se, ymax=Abundance+se),
+                  size=.3,    # Thinner lines
+                  width=.2,
+                  position=position_dodge(.9)) +
+    xlab("Dx") +
+    ylab("Abundance") +
+    scale_fill_hue(name="Dx", # Legend label, use darker colors
+                   breaks=c("IBS", "HC"),
+                   labels=c("IBS", "Healthy controls")) +
+    ggtitle("Relative Abundance of Phyla in IBS and HCs") +
+    theme_bw()
+ggsave(p, file = "relative_abundance_bar_Group.png")
+
+
+########
+Sort_OTUs = names(sort(taxa_sums(PS2), TRUE)[1:20])
+phy.sum = tax_glom(PS2, "Genus")
+Sort_OTUs = names(sort(taxa_sums(phy.sum), TRUE)[1:8])
+dat1.g <- t(otu_table(phy.sum)[row.names(otu_table(phy.sum))%in%Sort_OTUs,])
+dat1.g <- cbind(as.data.frame(dat1.g), as.character(sample_data(phy.sum)$Dx), as.character(sample_data(phy.sum)$Bowel.Habit))
+colnames(dat1.g)[c(9,10)]<- c("Dx","BH")
+colnames(dat1.g)[1:8] <- as.vector(as.data.frame(tax_table(phy.sum)[row.names(tax_table(phy.sum))%in%Sort_OTUs,6])$Genus) ## 4 genera have missing names, use family instead
+as.vector(as.data.frame(tax_table(phy.sum)[row.names(tax_table(phy.sum))%in%Sort_OTUs,5])$Family) 
+as.vector(as.data.frame(tax_table(phy.sum)[row.names(tax_table(phy.sum))%in%Sort_OTUs,4])$Order) 
+
+colnames(dat1.g)[c(4,5,7,8)] <- c("f__S24-7", "f__[Barnesiellaceae]","o__Clostridiales", "f__Lachnospiraceae") 
+
+
+colnames(dat1.g)[1:8] <- gsub(" ","",colnames(dat1.g)[1:8])
+dat1.g <- as.data.frame(dat1.g)
+dat1.g$Subjects <-row.names(dat1.g)
+
+library(reshape2)
+dat1.long <- melt(dat1.g)
+names(dat1.long)[names(dat1.long)=="value"] <- "Abundance"
+names(dat1.long)[1:2] <-c("Dx","BH")
+tgc <- summarySE(dat1.long, measurevar="Abundance", groupvars= c("variable","Dx"))
+
+p1 <- ggplot(tgc, aes(x=variable, y=Abundance, fill=Dx)) + 
+    geom_bar(position=position_dodge(), stat="identity",
+             colour="black", # Use black outlines,
+             size=.3) +      # Thinner lines
+    geom_errorbar(aes(ymin=Abundance-se, ymax=Abundance+se),
+                  size=.3,    # Thinner lines
+                  width=.2,
+                  position=position_dodge(.9)) +
+    xlab("Dx") +
+    ylab("Abundance") +
+    scale_fill_hue(name="Dx", # Legend label, use darker colors
+                   breaks=c("IBS", "HC"),
+                   labels=c("IBS", "Healthy controls")) +
+    ggtitle("Relative Abundance of Phyla in IBS and HCs") +
+    theme_bw()
+ggsave(p1, file = "relative_abundance_bar_Group_Genus.png")
+
+
+tgc1 <- summarySE(dat1.long, measurevar="Abundance", groupvars= c("variable","BH"))
+
+
+q <- ggplot(tgc1, aes(x=variable, y=Abundance, fill=BH)) + 
+    geom_bar(position=position_dodge(), stat="identity",
+             colour="black", # Use black outlines,
+             size=.3) +      # Thinner lines
+    geom_errorbar(aes(ymin=Abundance-se, ymax=Abundance+se),
+                  size=.3,    # Thinner lines
+                  width=.2,
+                  position=position_dodge(.9)) +
+    xlab("Dx") +
+    ylab("Abundance") +
+    scale_fill_hue(name="BH", # Legend label, use darker colors
+                   breaks=c("D", "C", "M", "N"),
+                   labels=c("IBS-D", "IBS-C", "IBS-M","Healthy controls")) +
+    ggtitle("Relative Abundance of Phyla in IBS Bowel habit subtypes and Healthy controls") +
+    theme_bw()
+
+ggsave(q, file = "relative_abundance_bar_BH.png")
+
+
+```
+# Abundance plots interaction Genus level
+```{r}
+TopNOTUs = names(sort(taxa_sums(PS2), TRUE)[1:10])
+ent10 = prune_taxa(TopNOTUs, PS2)
+png("BarPlot_top10_Dx_Gender_interaction.png", height = 3000, width = 3500, res = 200)
+plot_bar(ent10, "Dx_Gender_interaction", fill = "Genus",facet_grid = ~Genus)
+dev.off()
+plot_bar(ent10, "Dx_Gender_interaction", fill = "Genus",facet_grid = ~Genus)
+```
+# Abundance plots interaction family level
+```{r}
+TopNOTUs = names(sort(taxa_sums(PS2), TRUE)[1:10])
+ent10 = prune_taxa(TopNOTUs, PS2)
+png("BarPlot_top10_Group_family.png", height = 3000, width = 3500, res = 200)
+plot_bar(ent10, "Dx_Gender_interaction", fill = "Genus",facet_grid = ~Genus)
+dev.off()
+plot_bar(ent10, "Dx_Gender_interaction", fill = "Family",facet_grid = ~Family)
+```
+# Abundance plots interaction phylum level
+```{r}
+TopNOTUs = names(sort(taxa_sums(PS2), TRUE)[1:20])
+ent10 = prune_taxa(TopNOTUs, PS2)
+png("BarPlot_top10_Group.png", height = 3000, width = 3500, res = 200)
+plot_bar(ent10, "Dx_Gender_interaction", fill = "Genus",facet_grid = ~Genus)
+dev.off()
+plot_bar(ent10, "Dx_Gender_interaction", fill = "Phylum",facet_grid = ~Phylum)
+```
+# rarefaction
+```{r}
+set.seed(1022)
+phy <- rarefy_even_depth(PS2)
+save(phy, file = "phy.rda")
+# plot(as(otu_table(phy), 'vector'), as(otu_table(physeq), 'vector'))
+UniFrac(phy)
+```
+# Statistical testing
+```{r}
+alpha <- 0.05
+
+# Dx
+cor.p <- mt(phy, "Group")
+subset(cor.p, adjp < alpha)
+subset(cor.p, fdr < alpha)
+
+p <- subset(cor.p, rawp < alpha)
+write.csv(p, file= "Significant_p_Dx.csv")
+
+# Sex
+cor.p <- mt(phy, "Sex")
+subset(cor.p, adjp < alpha)
+subset(cor.p, fdr < alpha)
+
+p <- subset(cor.p, rawp < alpha)
+write.csv(p, file= "Significant_p_Sex.csv")
+
+# # Interaction
+# cor.p <- mt(phy, "Dx_Gender_interaction")
+# subset(cor.p, adjp < alpha)
+# subset(cor.p, fdr < alpha)
+# 
+# p <- subset(cor.p, rawp < alpha)
+# write.csv(p, file= "Significant_p_gr_sex_int.csv")
+# 
+# # Bowel habit
+# cor.p <- mt(phy, "BH")
+# subset(cor.p, adjp < alpha)
+# subset(cor.p, fdr < alpha)
+# 
+# p <- subset(cor.p, rawp < alpha)
+# write.csv(p, file= "Significant_p_BH.csv")
+
+```
+# Phyloseq to Deseq
+# we filtered the OUTs and transformed to get a PS2 object, however, we would like to work with counts and not fractions of abundance swith DESEq, however, we would also lake to keep the filetered numbers
+```{r}
+# Remove taxa not seen more than 3 times in at least 20% of the samples. This helps protect against an OTU with small mean & trivially large Coefficient of Variation. Save this as new phyloseq data object, PS. 
+
+PS = filter_taxa(physeq, function(x) sum(x > 3) > (0.2 * length(x)), 
+    TRUE)
+PS3 <- filter_taxa(PS, function(x) sd(x)/mean(x) > 3, TRUE)
+set.seed(1022)
+phy1 <- rarefy_even_depth(PS3)
+
+phy1
+```
+#1 Group
+```{r}
+sample_data(PS3)$Dx<- as.factor(sample_data(PS3)$Dx)
+sample_data(PS3)$Dx <- relevel(sample_data(PS3)$Dx, ref = "HC")
+diagdds = phyloseq_to_deseq2(PS3, ~ Dx)
+
+# calculate geometric means prior to estimate size factors
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(PS3)[rownames(sigtab), ], "matrix"))
+head(sigtab)
+dim(sigtab)
+write.csv(sigtab, file = "sig_adjP_Group.csv")
+```
+# visualize OTUs that were significantly different between Groups
+```{r}
+theme_set(theme_bw())
+scale_fill_discrete <- function(palname = "Set1", ...) {
+    scale_fill_brewer(palette = palname, ...)
+}
+# Phylum order
+x = tapply(sigtab$log2FoldChange, sigtab$Phylum, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Phylum = factor(as.character(sigtab$Phylum), levels=names(x))
+# Genus order
+x = tapply(sigtab$log2FoldChange, sigtab$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Abundance <- sigtab$baseMean
+sigtab$Genus = factor(as.character(sigtab$Genus), levels=names(x))
+p <- ggplot(sigtab, aes(x=Genus, y=log2FoldChange, color=Phylum, size = Abundance)) + geom_point() +   theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+ggsave(p, file = "log2Foldchange_phylum_Dx.png")
+```
+
+```{r}
+df0 <- otu_table(PS3)[row.names(otu_table(PS3))%in%row.names(sigtab),]
+df0 <- df0[row.names(sigtab),]
+match(row.names(as.matrix(sample_data(PS3))), colnames(df0))
+df1 <- cbind(t(df0), as.data.frame(sample_data(PS3)$Dx))
+colnames(df1) <- c(paste(tax_table(PS3)[row.names(tax_table(PS3))%in%row.names(sigtab),2],tax_table(PS3)[row.names(tax_table(PS3))%in%row.names(sigtab),6], sep="__"), "Dx")
+colnames(df1) <- gsub(" ","", colnames(df1))
+
+for ( i in 1:17) {
+df2<-aggregate(df1[,i], by=list(df1[,18]), FUN=mean)
+colnames(df2) <- c("Dx",colnames(df1)[i])
+p <- ggplot(df2, aes(x=Dx, y=df2[,2], fill= Dx) )
+q <- p + geom_bar(stat = "identity") + xlab("Dx") + ylab(colnames(df1)[i])
+ggsave(q, file=paste(paste(colnames(df1)[i],i, sep = "_"),"Dx.png", sep = "_"))
+}
+
+
+# Discrimination panel = all except, 7, 11 13 numbers
+# df3 <- df0[,c(9,10,12,6,5,4,5,2)] ## for bacteria high in IBS and low in HCs
+# df3 <- df0[,c(6,7)]  ## prevotella
+df3 <- df0[-c(1,2,3,4),] ## Clostridia
+PS_disc <- prune_taxa(row.names(df3), PS3)
+
+plot_ordination(PS_disc , ordinate(PS_disc , "MDS"), color = "Dx") + geom_point(size = 3) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 3, vjust = -1.5)
+```
+
+```{r}
+Firm_clostridiales <- cbind(df1[,c(13,15,16,17)],as.data.frame(sample_data(PS3)[,c(11,15:18,20,30:76)]))
+Firm_clostridiales$Group <- gsub("HC","1",Firm_clostridiales$Group)
+Firm_clostridiales$Group <- gsub("IBS","2",Firm_clostridiales$Group)
+Firm_clostridiales$Group <- as.factor(Firm_clostridiales$Group)
+
+############################################### association of traits with firmicutes acidaminococcus
+
+p <- ggplot(Firm_clostridiales, aes(Firm_clostridiales[,6],Firm_clostridiales[,2]))
+q <- p + geom_jitter(size =3, width = 0.25)  + scale_y_continuous(limits = c(0, 200)) + geom_text(label = row.names(Firm_clostridiales), size = 6) + labs(x= "Dx", y = "p__Firmicutes__g__Acidaminococcus")
+labels1 <- subset(Firm_clostridiales, Firm_clostridiales[,2]>25 & Firm_clostridiales[,6] == 2)
+row.names(labels1 )
+ # [1] "A5769" "A5748" "A6337" "A6242" "A4872" "A6393" "A5839" "A5670" "A6264" "A6390"
+ggsave(q, file = "p__Firmicutes__g__Acidaminococcus_Dx.png")
+
+
+Firm_clostridiales1 <- subset(Firm_clostridiales, Firm_clostridiales$Group == 2)
+Firm_clostridiales1$Group <- NULL
+p.traits1<-matrix(NA, nrow=52, ncol=1)
+for ( i in 1: 52)
+{p.traits1[i,1]<-summary(lm(Firm_clostridiales1[,2] ~ Firm_clostridiales1[,i]))$coefficients[,4][2]}
+row.names(p.traits1)<-colnames(Firm_clostridiales1)[5:56]
+subset(p.traits1, p.traits1 [,1] < 0.05)
+write.table(p.traits1, file="TraitsIbsClusters_lm.csv", col.names=NA, sep=",")
+
+
+p <- ggplot(Firm_clostridiales1, aes(Firm_clostridiales1$BSQ_Bloating,Firm_clostridiales1[,2]))
+p + geom_jitter(size =3, width = 0.25) + geom_text(label = row.names(Firm_clostridiales1), size = 6) + labs(x= "BSQ_Bloating", y = "p__Firmicutes__g__Acidaminococcus")
+labels1 <- subset(Firm_clostridiales1, Firm_clostridiales1[,2]>25)
+row.names(labels1 )
+ggsave(q, file = "p__Firmicutes__g__Acidaminococcus_BSQ_Bloating.png")
+
+
+# p <- ggplot(Firm_clostridiales1, aes(Firm_clostridiales1$ETI_Sexual_Score,Firm_clostridiales1[,2]))
+# p + geom_jitter(size =3, width = 0.25)  + scale_y_continuous(limits = c(0, 200)) + geom_text(label = row.names(Firm_clostridiales1), size = 6) + labs(x= "ETI_Sexual_Score", y = "p__Firmicutes__g__Acidaminococcus")
+# labels1 <- subset(Firm_clostridiales1, Firm_clostridiales1[,2]>25 & Firm_clostridiales1[,6] == 2)
+# row.names(labels1 )
+# ggsave(q, file = "p__Firmicutes__g__Acidaminococcus_ETI_Sexual_Score.png")  ### not interesting
+
+
+############################################ trait association with firmicutes p__Firmicutes__g__Phascolarctobacterium
+
+p <- ggplot(Firm_clostridiales, aes(Firm_clostridiales[,6],Firm_clostridiales[,3]))
+q <- p + geom_jitter(size =3, width = 0.25)  + scale_y_continuous(limits = c(0, 500)) + geom_text(label = row.names(Firm_clostridiales), size = 6) + labs(x= "Dx", y = "p__Firmicutes__g__Phascolarctobacterium")
+labels1 <- subset(Firm_clostridiales, Firm_clostridiales[,3]>50 & Firm_clostridiales[,6] == 2)
+row.names(labels1)
+ # [1] "A6379" "A6244" "A5169" "A5769" "A5556" "A6133" "A6111" "A5712" "A6337" "A5813" "A6393" "A5733" "A6373"
+ggsave(q, file = "p__Firmicutes__g__Phascolarctobacterium_Dx.png")
+
+Firm_clostridiales1 <- subset(Firm_clostridiales, Firm_clostridiales$Group == 2)
+Firm_clostridiales1$Group <- NULL
+p.traits1<-matrix(NA, nrow=52, ncol=1)
+for ( i in 1: 52)
+{p.traits1[i,1]<-summary(lm(Firm_clostridiales1[,3] ~ Firm_clostridiales1[,i]))$coefficients[,4][2]}
+row.names(p.traits1)<-colnames(Firm_clostridiales1)[5:56]
+subset(p.traits1, p.traits1 [,1] < 0.05)
+
+# Sex                           0.000000e+00
+# ACE_Household_Mental_Illness  4.183416e-03
+# ACE_Parents_Treated_Violently 4.450500e-02
+# Major_Depressive_p            3.244196e-02
+# Dysthymia_p                   3.974727e-03
+# Agoraphobia_c                 6.845118e-06
+# Anorexia_c                    6.176009e-03
+# Generalized_Anxiety_c         3.241949e-08
+
+write.table(p.traits1, file="TraitsIbsClusters_lm_p__Firmicutes__g__Phascolarctobacterium.csv", col.names=NA, sep=",")
+
+
+p <- ggplot(Firm_clostridiales1, aes(Firm_clostridiales1[,7],Firm_clostridiales1[,3]))
+q <- p + geom_jitter(size =3, width = 0.25) + scale_y_continuous(limits = c(0, 500))  + geom_text(label = row.names(Firm_clostridiales1), size = 6) + labs(x= "Sex", y = "p__Firmicutes__g__Phascolarctobacterium")
+# labels1 <- subset(Firm_clostridiales, Firm_clostridiales[,3]>500 & Firm_clostridiales[,6] == 2)
+# row.names(labels1)
+ # [1] "A5769" "A5748" "A6337" "A6242" "A4872" "A6393" "A5839" "A5670" "A6264" "A6390"
+ggsave(q, file = "p__Firmicutes__g__Phascolarctobacterium_Sex.png")
+q ##### not very interesting
+
+
+p <- ggplot(Firm_clostridiales1, aes(Firm_clostridiales1$ACE_Household_Mental_Illness,Firm_clostridiales1[,3]))
+q <- p + geom_jitter(size =3, width = 0.25)  + scale_y_continuous(limits = c(0, 2000)) + geom_text(label = row.names(Firm_clostridiales1), size = 6) + labs(x= "ACE_Household_Mental_Illness", y = "p__Firmicutes__g__Phascolarctobacterium")
+labels1 <- subset(Firm_clostridiales1, Firm_clostridiales1[,3]>25 & Firm_clostridiales1[,6] == 2)
+row.names(labels1 )
+ggsave(q, file = "p__Firmicutes__g__Phascolarctobacterium_ACE_Household_Mental_Illness.png")
+
+
+p <- ggplot(Firm_clostridiales1, aes(Firm_clostridiales1$Major_Depressive_p,Firm_clostridiales1[,3]))
+p + geom_jitter(size =3, width = 0.25)  + scale_y_continuous(limits = c(0, 200)) + geom_text(label = row.names(Firm_clostridiales1), size = 6) + labs(x= "Major_Depressive_p", y = "p__Firmicutes__g__Phascolarctobacterium")
+ggsave(q, file = "p__Firmicutes__g__Phascolarctobacterium_Major_Depressive_p.png")
+
+
+p <- ggplot(Firm_clostridiales1, aes(Firm_clostridiales1$Generalized_Anxiety_c, Firm_clostridiales1[,3]))
+q <- p + geom_jitter(size =3, width = 0.25) + scale_y_continuous(limits = c(0, 500)) + geom_text(label = row.names(Firm_clostridiales1), size = 6) + labs(x= "Generalized_Anxiety_c", y = "p__Firmicutes__g__Phascolarctobacterium")
+ggsave(q, file = "p__Firmicutes__g__Phascolarctobacterium_Generalized_Anxiety_c.png")
+
+
+p <- ggplot(Firm_clostridiales1, aes(Firm_clostridiales1$Agoraphobia_c, Firm_clostridiales1[,3]))
+q <- p + geom_jitter(size =3, width = 0.25) + scale_y_continuous(limits = c(0, 500)) + geom_text(label = row.names(Firm_clostridiales1), size = 6) + labs(x= "Agoraphobia_c", y = "p__Firmicutes__g__Phascolarctobacterium")
+ggsave(q, file = "p__Firmicutes__g__Phascolarctobacterium_Agoraphobia_c.png")
+
+
+
+###################
+p <- ggplot(Firm_clostridiales, aes(Firm_clostridiales[,6],Firm_clostridiales[,1]))
+q <- p + geom_jitter(size =3, width = 0.25)  + scale_y_continuous(limits = c(0, 500)) + geom_text(label = row.names(Firm_clostridiales), size = 6) + labs(x= "Dx", y = "p__Firmicutes__g__1")
+labels1 <- subset(Firm_clostridiales, Firm_clostridiales[,3]>50 & Firm_clostridiales[,6] == 2)
+row.names(labels1)
+
+```
+
+#2 Sex
+```{r}
+diagdds = phyloseq_to_deseq2(PS3, ~ Sex)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(PS3)[rownames(sigtab), ], "matrix"))
+head(sigtab)
+dim(sigtab)
+write.csv(sigtab, file = "sig_adjP_Sex.csv")
+```
+# visualize OTUs that were significantly different between Sex
+```{r}
+theme_set(theme_bw())
+scale_fill_discrete <- function(palname = "Set1", ...) {
+    scale_fill_brewer(palette = palname, ...)
+}
+# Phylum order
+x = tapply(sigtab$log2FoldChange, sigtab$Phylum, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Phylum = factor(as.character(sigtab$Phylum), levels=names(x))
+# Genus order
+x = tapply(sigtab$log2FoldChange, sigtab$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Genus = factor(as.character(sigtab$Genus), levels=names(x))
+p <- ggplot(sigtab, aes(x=Genus, y=log2FoldChange, color=Phylum)) + geom_point(size=6) + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+ggsave(p, file = "log2Foldchange_phylum_sex.png")
+```
+#2 Dx_Sex_interaction
+```{r}
+diagdds = phyloseq_to_deseq2(PS3, ~ Dx_Gender_interaction)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(PS3)[rownames(sigtab), ], "matrix"))
+head(sigtab)
+dim(sigtab)
+write.csv(sigtab, file = "sig_adjP_Sex_group_interaction.csv")
+```
+# visualize OTUs that were significantly different between Dx-sex interaction groups
+```{r}
+theme_set(theme_bw())
+scale_fill_discrete <- function(palname = "Set1", ...) {
+    scale_fill_brewer(palette = palname, ...)
+}
+# Phylum order
+x = tapply(sigtab$log2FoldChange, sigtab$Phylum, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Phylum = factor(as.character(sigtab$Phylum), levels=names(x))
+# Genus order
+x = tapply(sigtab$log2FoldChange, sigtab$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab$Genus = factor(as.character(sigtab$Genus), levels=names(x))
+p <- ggplot(sigtab, aes(x=Genus, y=log2FoldChange, color=Phylum)) + geom_point(size=6) + 
+  theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5))
+
+ggsave(p, file = "log2Foldchange_phylum_interaction_group_sex.png")
+```
+
+# Assocaition with clinical traits
+```{r}
+# map4 <- traits_mat
+# map4$Description<-NULL
+# map4$Group<-ifelse(map4$Group == "IBS", 2,1)
+# map4$Gender<-gsub("M","1",map4$Gender)
+# map4$Gender<-gsub("F","2",map4$Gender)
+# map5<-apply(map4[,c(15:18, 20:51, 53:79)],2,as.numeric)
+# row.names(map5)<-row.names(map4)
+# 
+# save(map5, file="map.numeric.rda")
+# 
+# p.traits1<-matrix(NA, nrow=63, ncol=1)
+# for ( i in 1: 63)
+# {p.traits1[i,1]<-summary(lm(map5[,i] ~ map5[,62]))$coefficients[,4][2]}
+# row.names(p.traits1)<-colnames(map5)
+# p.traits1
+# write.table(p.traits1, file="TraitsIbsClusters_lm.csv", col.names=NA, sep=",")
+# 
+# boxplot(map4[,9] ~ as.factor(map4[,31]))
+```
+# Actinobacteria-Bifidobacterium were lowest and bacteroidetes-prevotella were highest. plot the relationship between them, with IBS bowel habit subtypes as third variable
+```{r}
+# df0 <- otu_table(PS2)[row.names(otu_table(PS2))%in%row.names(sigtab),]
+# match(row.names(as.matrix(sample_data(PS2))), colnames(df0))
+# df3 <- cbind(t(df0), as.data.frame(sample_data(PS2)$BH))
+# colnames(df3) <- c(paste(tax_table(PS2)[row.names(tax_table(PS2))%in%row.names(sigtab),6], row.names(tax_table(PS2)[row.names(tax_table(PS2))%in%row.names(sigtab),]),sep="_"), "BH")
+# colnames(df3) <- gsub(" ","", colnames(df3))
+# p1 <- ggplot(df3, aes(x = g__Bacteroides_362608, y = g__Prevotella_591785))
+# p1 + geom_point(aes(color=factor(BH), size = 3)) + scale_color_manual(values = c("green", "red", "blue", "yellow", "gray"))
+
+```
+
+```{r}
+pval <- matrix(NA, nrow = 29, ncol=2)
+
+Pheno1 <- sample_data(PS2)[,c(16,17,18,20,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,76,77)]
+Pheno1$prevotella <- t(otu_table(PS2)[row.names(otu_table(PS2))=="591785",])
+colnames(Pheno1)[29] <-"prevotella"
+Pheno2 <- as.matrix(Pheno1)
+Pheno2 <- matrix(as.numeric(as.character(Pheno2)), ncol=29, nrow=85)
+row.names(Pheno2) <- row.names(Pheno1)
+colnames(Pheno2)<- colnames(Pheno1)
+
+#only IBS patients
+Pheno2.ibs <- subset(Pheno2, Pheno2[,1] !=4)
+
+for ( i in c(1:28))
+{
+  pval[i,1] = round(anova(lm(Pheno2.ibs[,i]~Pheno2.ibs[,29]))$'Pr(>F)'[1],3)
+pval[i,2] = round(summary(lm(Pheno2.ibs[,i]~Pheno2.ibs[,29]))$r.squared,3)
+png(paste(colnames(Pheno2.ibs)[i],"prevotella.png", sep = ""))
+        plot(Pheno2.ibs[,i] ~ Pheno2.ibs[,29], xlab = "G", ylab = colnames(Pheno2.ibs)[i])
+        legend("bottomright",paste(paste("p_value =", pval[i,1], paste("RSquared = ", pval[i,2]))), cex = 0.9)
+        # text(paste(paste("p_value =", pval[i,1], paste("RSquared = ", pval[i,2]))), cex=0.6, pos=1, col="red")
+        dev.off()
+        plot(Pheno2.ibs[,i] ~ Pheno2.ibs[,29], xlab = "G", ylab = colnames(Pheno2.ibs)[i])
+        legend("bottomright",paste(paste("p_value =", pval[i,1], paste("RSquared = ", pval[i,2]))), cex = 0.9)
+        # text(paste(paste("p_value =", pval[i,1], paste("RSquared = ", pval[i,2]))), cex=0.6, pos=1, col="red")
+}
+
+
+row.names(pval) <- colnames(Pheno1)
+colnames(pval) <- c("P_value", "RSquared")
+pval
+
+
+subset(pval, pval[,1] < 0.1) 
+```
+
+# To be done 
+# correlation with clinical characteristics
+
+# correlation with stool microbiome data
+
+# correlation with miRNA metadata
+
+
+```{r}
+tax_table(PS2)[,2] <- gsub(" ", "", tax_table(PS2)[,2])
+set.seed(1022)
+plot_ordination(PS2, ordinate(PS2, "MDS"), color = "Dx") + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+
+# just the ones that are different
+sig = subset_taxa(PS2, row.names(tax_table(PS2)) %in% row.names(sigtab))
+plot_ordination(sig, ordinate(sig, "MDS"), color = "Dx") + geom_point(size = 3) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 3, vjust = -1.5)
+
+
+# 
+#  [1] "296945"  "1111294" "349809"  "71331"   "362608"  "568118"  "591785"  "366147"  "315430"  "315846"  "365385" 
+# [12] "1017181" "564941"  "330294"  "185659"  "916143"  "659361" 
+
+
+sig = subset_taxa(PS3, row.names(tax_table(PS3)) %in% c("296945","1111294","349809", "71331","362608","568118","591785"))
+plot_ordination(sig, ordinate(sig, "MDS"), color = "Dx", axes=c(1,2)) + geom_point(size = 5) + theme(text = element_text(size = 12)) + geom_text(mapping = aes(label = NDPNum), size = 5, vjust = 1.5)
+
+```
+
+```{r}
+install.packages("shiny")
+shiny::runGitHub("shiny-phyloseq","joey711")
+```
+
+
+
+
+
+
+
+
+#################### microbiome - miRNA integration full 
+
+# Remove taxa not seen more than 3 times in at least 30% of the samples (this is specifically for miRNA integration to reduce noise). This helps protect against an OTU with small mean & trivially large Coefficient of Variation. Save this as new phyloseq data object, PS. 
+```{r}
+PS = filter_taxa(physeq, function(x) sum(x > 3) > (0.2 * length(x)), 
+    TRUE)
+PS
+```
+# Transform abundances to the median sequencing depth.
+```{r}
+total <- median(sample_sums(PS))
+standf <- function(x, t = total) round(t * (x/sum(x)),2)
+PS1 <- transform_sample_counts(PS, standf)
+```
+# Filter the taxa using a cutoff of 3.0 for the Coefficient of Variation.
+```{r}
+PS2 <- filter_taxa(PS1, function(x) sd(x)/mean(x) > 3, TRUE)
+
+```
+
+
+```{r}
+
+load("C:/Users/swapnajoshi/Documents/UCLA_research/miRNAtissueSerumIbs/nanostring_data/Results/biopsy_miR/norm.data4.rda"); dim(norm.data4)
+mirna<-norm.data4
+colnames(mirna)<-substr(colnames(mirna),1,5)
+microbMat<-as.data.frame(otu_table(PS2))
+
+# row.names(microbMat)<-substr(row.names(microbMat),8,12)
+microbMat1<-as.data.frame(t(microbMat))
+microbMat2<-microbMat[,colnames(microbMat)%in%colnames(mirna)]; dim(microbMat2)
+mirna1<-mirna[,colnames(mirna)%in%colnames(microbMat2)]
+microbMat2<-microbMat2[,colnames(mirna1)];
+match(colnames(microbMat2),colnames(mirna1))
+# [1]  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37
+# [38] 38 39 40 41 42 43 44
+row.names(microbMat2)<- paste("otu",row.names(microbMat2),sep = "_")
+row.names(mirna1)<- gsub("-","_",row.names(mirna1))
+row.names(mirna1)<- gsub("\\|..*","",row.names(mirna1))
+
+#Variable data
+met1 <- sample_data(PS2)
+met2<-met1[row.names(met1)%in%colnames(microbMat2),]
+met2<-met2[colnames(microbMat2),];
+match(colnames(microbMat2),row.names(met2))
+dat <- cbind(t(microbMat2), t(mirna1), met2$Dx, met2$Gender)
+colnames(dat)[419] <- "Dx"
+colnames(dat)[420] <- "Gender"
+```
+# negative binomial regression with miRNA and microbiome data
+```{r}
+dat <- as.data.frame(dat)
+require(foreign)
+require(ggplot2)
+require(MASS)
+m1 <- glm.nb(otu_1106324 ~ Dx + Gender, data = dat)
+summary(m1)
+r1 <- residuals(m1)
+std.r <- r1/sd(r1)
+
+mi1 <- glm.nb(hsa_miR_1323 ~ Dx + Gender, data = dat)
+summary(mi1)
+r2 <- residuals(mi1)
+std.r2 <- r2/sd(r2)
+plot(std.r,std.r2)
+
+
+```
+
+```{r}
+library(mixOmics)
+color<-color.jet
+par(mfrow = c(1,2));
+png("mixOmics.png", height=2000, width=3000, res=300)
+liver.splsda <- imgCor(t(mirna1), t(microbMat2), X.var.names = TRUE,
+                       Y.var.names = TRUE,
+                       sideColors = TRUE,
+                       interactive.dev = TRUE)
+                       # ,main = TRUE)
+# color, row.cex, col.cex,symkey, keysize,
+# xlab, ylab, margins, lhei, lwid)
+dev.off()
+
+data1<-cbind(t(mirna1),t(microbMat2))
+library(ellipse)
+ctab <- cor(data1)
+
+# corMat<-round(ctab, 2)
+# sub1<-function(x)(subset(x, x[i]>=0.5))
+# make a cor matrix of only mir-micro
+corMat2 <- ctab[1:418,419:559]
+
+highCor<-matrix(NA, nrow=418, ncol=141)
+row.names(highCor)<-row.names(corMat2)
+colnames(highCor)<-colnames(corMat2)
+for ( i in 1:dim(corMat2)[1])
+  for ( j in 1:dim(corMat2)[2])
+  {
+    if(corMat2[i,j] >= 0.5){
+    highCor[i,j] <- 1
+    }   else if(corMat2[i,j] < -0.5) {
+    highCor[i,j] <- 1
+    } else {
+      highCor[i,j] <- 0
+    }
+  }
+
+# mirnaMicroCor<-highCor[1:339,340:356]
+mirnaMicroCor<-as.data.frame(highCor)
+
+mirnaMicroCor$sum1<-apply(mirnaMicroCor,1,sum)
+mirnaMicroCor1<-mirnaMicroCor[mirnaMicroCor$sum1>0,]
+selSp<-apply(mirnaMicroCor1,2,sum)
+selSp1<-names(selSp[selSp>0])
+mirnaMicroCor2 <- mirnaMicroCor1[,selSp1]
+
+dim(mirnaMicroCor2)
+
+write.table(mirnaMicroCor2, file="mirnaMicroCor2.csv", sep=",", col.names=NA)
+
+bacSel <- colnames(mirnaMicroCor2)
+mirSel <- row.names(mirnaMicroCor2)
+
+cor.microb <- t(microbMat2[row.names(microbMat2)%in%bacSel,]); dim(cor.microb)
+cor.mirna<-t(mirna1[row.names(mirna1) %in% mirSel,]); dim(cor.mirna)
+
+data2<-as.data.frame(cbind(cor.microb,cor.mirna))
+littleIbsMappingIBsHcClust<-read.delim(file="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/New_qiime_analyses_11062016/littleIbsMappingIBsHcClust.csv",sep=",", row.names=1); dim(littleIbsMappingIBsHcClust)
+map.mirna<-littleIbsMappingIBsHcClust[substr(row.names(littleIbsMappingIBsHcClust),8,13)%in%row.names(data2),]; dim(map.mirna)
+
+row.names(map.mirna)<-substr(row.names(map.mirna),8,13)
+map.mirna<-map.mirna[row.names(data2),]
+match(row.names(data2),row.names(map.mirna))
+data3<-cbind(data2, map.mirna[,c(5,3,4,33)])
+colnames(data3)<-gsub(" ","",colnames(data3))
+colnames(data3)<-gsub(";","",colnames(data3))
+colnames(data3)<-gsub("-","_",colnames(data3))
+colnames(data3)<-gsub("\\|","",colnames(data3))
+colnames1<-colnames(data3)
+
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/Resequencing/batch1_batch2_merged/Phyloseq_workflow/miRNA_microbiome_correlations/")
+for ( i in 1:25)
+  for (j in 26:64) {
+    cat(paste("plot",i,j))
+    P<-ggplot(data3, aes(data3[,i],data3[,j])) + geom_point(size=4) 
+    q<-P+geom_point(aes(color=as.factor(data3$Group)))+ xlab(colnames1[i]) + ylab(colnames1[j])
+ggsave(q, filename = paste(colnames1[i],colnames1[j],".png"))
+  }
+
+P<-ggplot(data3, aes(data3[,195],data3[,38])) + geom_point(size=4) 
+q<-P+geom_point(aes(color=as.factor(data3$Group)))+ xlab("F_Lachnospiraceae") + ylab("hsa_miR_200c_3p0") + geom_smooth(aes(data3[,9],data3[,38],colour=factor(Group)), method=lm, se=FALSE)
+q
+ggsave(q, filename = "hsa_miR_200c_3p0_F_Lachnospiraceae_lm.png")
+
+P<-ggplot(data3, aes(data3[,7],data3[,19])) + geom_point(size=4) 
+q<-P+geom_point(aes(color=as.factor(data3$Group)))+ xlab("F_Alicyclobacillus") + ylab("hsa_miR_195_5p0") + geom_smooth(aes(data3[,7],data3[,19],colour=factor(Group)), method=lm, se=FALSE)
+q
+ggsave(q, filename = "hsa_miR_195_5p0_F_Alicyclobacillus_lm.png")
+
+```
+
+# pubmed search for articles related to the miRNAs of interest
+
+```{r}
+miR <- c("hsa-miR-141", "hsa-miR-144","hsa-miR-125b","hsa-miR-139", "hsa-miR-204","hsa-miR-100", "hsa-let-7g","hsa-miR-1", "hsa-miR-411","hsa-miR-200c", "hsa-miR-374a" )
+
+uniq.mirna <- row.names(subset(miR, duplicated(gsub('\\|.*',"",row.names(SigRes.fc))) == FALSE))
+uniq.mirna <- gsub('\\|.*',"",uniq.mirna)
+uniq.mirna <- gsub('-3p',"",uniq.mirna)
+uniq.mirna <- gsub('-5p',"",uniq.mirna)
+
+library(RISmed)
+
+for ( i in 1:length(uniq.mirna))
+    {  
+  res<- EUtilsSummary(uniq.mirna[i] , type="esearch", db="pubmed", datetype='pdat', mindate=2000,maxdate=2016, retmax=500)
+  pubmedID <- QueryId(res)
+    records <-EUtilsGet(res)
+  Atitle <- unlist(ArticleTitle(records))
+pubmed_data <- data.frame(cbind('Title'=Atitle,'Pubmed_ID'= pubmedID, 'Abstract'=AbstractText(records)))
+write.table(pubmed_data, file = paste(uniq.mirna[i],"pubmed.csv"), sep = ",", col.names = NA)
+}
+```
+
+# alicyclobacillus looked very different between 2 grous of IBS patients; # alicyclobacillus membership
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/swapna") 
+
+match(row.names(datExpr0), row.names(littleIbsMappingIBsHcClust))
+littleIbsMappingIBsHcClust$Description<-NULL
+# littleIbsMappingIBsHcClust$Group<-NULL
+littleIbsMappingIBsHcClust$Gender<-gsub("M","1",littleIbsMappingIBsClust$Gender)
+littleIbsMappingIBsHcClust$Gender<-gsub("F","2",littleIbsMappingIBsClust$Gender)
+map4<-apply(littleIbsMappingIBsHcClust,2,as.numeric)
+row.names(map4)<-row.names(littleIbsMappingIBsHcClust)
+map4<-as.data.frame(map4)
+map4$Alicyclobacillus<-NA
+for (i in 1:83) {
+  if(datExpr0[i,7] >= 0.005) {
+    map4[i,33] <- 1
+  } else if(datExpr0[i,7] < 0.005) {
+    map4[i,33] <- 0
+  } 
+}
+table(map4$Alicyclobacillus)
+
+map4.ibs<-subset(map4, map4$Group == 2)
+save(map4.ibs, file = "IBSmappingAlicyclobacillus.rda")
+save(map4, file = "mappingAlicyclobacillus.rda")
+
+map4.ibs$Group<-NULL
+ab.traits1<-matrix(NA, nrow=32, ncol=1)
+for ( i in 1: 30)
+{ab.traits1[i,1]<-summary(lm(map4.ibs[,i] ~ map4.ibs[,32]))$coefficients[,4][2]}
+row.names(ab.traits1)<-colnames(map4.ibs)
+ab.traits1
+write.table(ab.traits1, file="alicyclobacillusTraitsIbs_lm.csv", col.names=NA, sep=",")
+
+boxplot(map4.ibs[,9] ~ as.factor(map4.ibs[,32]))
+
+```
+
+# correlation with clinical traits
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/swapna") 
+
+littleIbsMappingIBsClust$Description<-NULL
+littleIbsMappingIBsClust$Group<-NULL
+littleIbsMappingIBsClust$Gender<-gsub("M","1",littleIbsMappingIBsClust$Gender)
+littleIbsMappingIBsClust$Gender<-gsub("F","2",littleIbsMappingIBsClust$Gender)
+map4<-apply(littleIbsMappingIBsClust,2,as.numeric)
+row.names(map4)<-row.names(littleIbsMappingIBsClust)
+
+save(map4, file="map.numeric.clu1.2.rda")
+
+p.traits1<-matrix(NA, nrow=31, ncol=1)
+for ( i in 1: 30)
+{p.traits1[i,1]<-summary(lm(map4[,i] ~ map4[,31]))$coefficients[,4][2]}
+row.names(p.traits1)<-colnames(map4)
+p.traits1
+write.table(p.traits1, file="TraitsIbsClusters_lm.csv", col.names=NA, sep=",")
+
+boxplot(map4[,9] ~ as.factor(map4[,31]))
+
+```
+
+#trait correlation with membership ibs and hc
+```{r}
+map4<-read.delim("C:/Users/swapnajoshi-admin/Documents/swapna/littleIbsMappingIBsHcClust.csv", sep=",", row.names = 1)
+for(i in 1:83) { if(map4[i,3] == 1) {map4[i,33] <- 4}}
+
+map4$Description<-NULL
+map4$Gender<-gsub("M","1",map4$Gender)
+map4$Gender<-gsub("F","2",map4$Gender)
+
+# between cluster 1 and 2
+
+map4_1<-subset(map4, map4[,32] == 1 | map4[,32] == 2)
+traits1<-matrix(NA, nrow=32, ncol=1)
+for ( i in 1: 31)
+{traits1[i,1]<-summary(lm(map4_1[,i] ~ map4_1[,32]))$coefficients[,4][2]}
+row.names(traits1)<-colnames(map4_1)
+traits1
+write.table(traits1, file="ibsHcCluster12Traits_lm.csv", col.names=NA, sep=",")
+
+p <- ggplot(map4, aes(factor(IbsHcClusterMemb), BSQ_Bloating))
+q <- p + geom_boxplot(aes(fill = factor(IbsHcClusterMemb)))
+ggsave(q, file="BSQ_Bloating_ibsHcCluster.png")
+
+p <- ggplot(map4, aes(factor(IbsHcClusterMemb), BSQ_UsualSeverity))
+q <- p + geom_boxplot(aes(fill = factor(IbsHcClusterMemb)))
+ggsave(q, file="BSQ_UsualSeverity_ibsHcCluster.png") ## missing points
+
+p <- ggplot(map4, aes(factor(IbsHcClusterMemb), VSI_Score))
+q <- p + geom_boxplot(aes(fill = factor(IbsHcClusterMemb)))
+ggsave(q, file="VSI_Score_ibsHcCluster.png")
+
+
+p <- ggplot(map4, aes(factor(IbsHcClusterMemb), BSQ_OverallSx))
+q <- p + geom_boxplot(aes(fill = factor(IbsHcClusterMemb)))
+ggsave(q, file="BSQ_OverallSx_ibsHcCluster.png") ### missing points
+# between cluster 2 and 3 
+
+map4_2<-subset(map4, map4[,32] == 2 | map4[,32] == 3);dim(map4_2)
+traits2<-matrix(NA, nrow=32, ncol=1)
+for ( i in 1: 31)
+{traits2[i,1]<-summary(lm(map4_2[,i] ~ map4_2[,32]))$coefficients[,4][2]}
+row.names(traits2)<-colnames(map4_2)
+traits2
+
+write.table(traits2, file="ibsHcCluster23Traits_lm.csv", col.names=NA, sep=",")
+
+# between cluster 1 and 3 
+
+map4_3<-subset(map4, map4[,32] == 1 | map4[,32] == 3);dim(map4_3)
+traits3<-matrix(NA, nrow=32, ncol=1)
+for ( i in 1: 31)
+{traits3[i,1]<-summary(lm(map4_3[,i] ~ map4_3[,32] + map4_3[,6]))$coefficients[,4][2]}
+row.names(traits3)<-colnames(map4_3)
+traits3
+
+# between cluster 1 and HC 
+
+map4_4<-subset(map4, map4[,32] == 1 | map4[,32] == 4);dim(map4_4)
+traits4<-matrix(NA, nrow=32, ncol=1)
+for ( i in 1: 31)
+{traits4[i,1]<-summary(lm(map4_4[,i] ~ map4_4[,32]))$coefficients[,4][2]}
+row.names(traits4)<-colnames(map4_4)
+traits4
+```
+
+```{r}
+
+
+# mapping file with 1. IBSHC membership, and IBS membership
+map4<-read.delim("C:/Users/swapnajoshi-admin/Documents/swapna/littleIbsMappingIBsHcClust.csv", sep=",", row.names = 1); dim(map4)
+map4_ibs<-subset(map4, map4$Group == 2)
+map5<-read.delim("C:/Users/swapnajoshi-admin/Documents/swapna/littleIbsMappingIBsClust.csv", sep=",", row.names = 1); dim(map5)
+map4_hc<-subset(map4, map4$Group == 1)
+map5<-map5[row.names(map4_ibs),]
+match(row.names(map5),row.names(map4_ibs))
+map4_ibs$IbsClusterMemb<-map5$IbsClusterMemb
+map4_hc$IbsClusterMemb<-4
+mappingIBS_IBSHC_ClusterMemb<-rbind(map4_ibs, map4_hc)
+
+map4$IBSMembership<-NA
+  for ( i in 1:83) {
+  if(map4[i,3] == 1) {
+    map4[i,34] <- 4
+  }
+  else if(map4[i,32] != 4) {
+    map4[i,34] <- map5[i,34]
+  }
+}
+  for ( i in 1:83) {
+    if(map4[i,34] == 4) {
+      map4[i,33] <- 4 
+    }
+    else if(map4[i,32] != 4) {
+      map4[i,33] <- map4[i,33]
+    }
+  }
+
+mappingIBS_IBSHC_ClusterMemb$ACE_Emotional_Abuse<-NULL
+mappingIBS_IBSHC_ClusterMemb$ACE_Sexual_Abuse<-NULL
+mappingIBS_IBSHC_ClusterMemb$ACE_Score<-NULL
+mappingIBS_IBSHC_ClusterMemb$ACE_Physical_Abuse<-NULL
+mappingIBS_IBSHC_ClusterMemb$ACE_Substance_Abuse<-NULL
+mappingIBS_IBSHC_ClusterMemb$ACE_Parental_DivorceSep<-NULL
+mappingIBS_IBSHC_ClusterMemb$ACE_Household_Mental_Illness<-NULL
+mappingIBS_IBSHC_ClusterMemb$ACE_Parents_Treated_Violently<-NULL
+
+#write the ibs cluster membership to mapping file
+
+dim(mappingIBS_IBSHC_ClusterMemb)
+# [1] 83 26
+
+mappingIBS_IBSHC_ClusterMemb$ibsCluster_1<-NA
+for( i in 1: dim(mappingIBS_IBSHC_ClusterMemb)[1])
+{
+  if(mappingIBS_IBSHC_ClusterMemb[i,26]==1) {
+    mappingIBS_IBSHC_ClusterMemb[i,27]<-1
+    }  else (mappingIBS_IBSHC_ClusterMemb[i,27]<-0)
+}
+
+mappingIBS_IBSHC_ClusterMemb$ibsCluster_2<-NA
+for( i in 1: dim(mappingIBS_IBSHC_ClusterMemb)[1])
+{
+  if(mappingIBS_IBSHC_ClusterMemb[i,26]==2) {
+    mappingIBS_IBSHC_ClusterMemb[i,28]<-1
+    }  else (mappingIBS_IBSHC_ClusterMemb[i,28]<-0)
+}
+
+mappingIBS_IBSHC_ClusterMemb$ibsCluster_hc<-NA
+for( i in 1: dim(mappingIBS_IBSHC_ClusterMemb)[1])
+{
+  if(mappingIBS_IBSHC_ClusterMemb[i,26]==4){
+    mappingIBS_IBSHC_ClusterMemb[i,29]<-1
+    }  else (mappingIBS_IBSHC_ClusterMemb[i,29]<-0)
+}
+
+
+#write the ibs hc cluster membership to mapping file
+
+
+mappingIBS_IBSHC_ClusterMemb$ibsHcCluster_1<-NA
+for( i in 1: dim(mappingIBS_IBSHC_ClusterMemb)[1])
+{
+  if(mappingIBS_IBSHC_ClusterMemb[i,25]==1) {
+    mappingIBS_IBSHC_ClusterMemb[i,30]<-1
+  }  else (mappingIBS_IBSHC_ClusterMemb[i,30]<-0)
+}
+
+mappingIBS_IBSHC_ClusterMemb$ibsHcCluster_2<-NA
+for( i in 1: dim(mappingIBS_IBSHC_ClusterMemb)[1])
+{
+  if(mappingIBS_IBSHC_ClusterMemb[i,25]==2) {
+    mappingIBS_IBSHC_ClusterMemb[i,31]<-1
+  }  else (mappingIBS_IBSHC_ClusterMemb[i,31]<-0)
+}
+
+mappingIBS_IBSHC_ClusterMemb$ibsHcCluster_3<-NA
+for( i in 1: dim(mappingIBS_IBSHC_ClusterMemb)[1])
+{
+  if(mappingIBS_IBSHC_ClusterMemb[i,25]==3) {
+    mappingIBS_IBSHC_ClusterMemb[i,32]<-1}
+  else (mappingIBS_IBSHC_ClusterMemb[i,32]<-0)
+}
+
+mappingIBS_IBSHC_ClusterMemb$ibsHcCluster_hc<-NA
+for( i in 1: dim(mappingIBS_IBSHC_ClusterMemb)[1])
+{
+  if(mappingIBS_IBSHC_ClusterMemb[i,25]==4) {
+    mappingIBS_IBSHC_ClusterMemb[i,33]<-1
+    }  else (mappingIBS_IBSHC_ClusterMemb[i,33]<-0)
+}
+
+
+write.table(mappingIBS_IBSHC_ClusterMemb, file= "mappingIBS_IBSHC_ClusterMemb.csv", sep=',', col.names=NA)
+
+```
+
+# firmicutes bacteroidetes ratio from qiime
+```{r}
+
+fb_ratio <- read.delim("C:/Users/swapnajoshi-admin/Documents/swapna/AlphaBetaDiv04292016/ratios/FirmiBactRatio.txt", sep = "\t", row.names = 1); dim(fb_ratio)
+
+# Group
+fb_ratio<-as.matrix(fb_ratio)
+fb_ratio<-as.data.frame(fb_ratio[row.names(mappingIBS_IBSHC_ClusterMemb),])
+match(row.names(fb_ratio), row.names(mappingIBS_IBSHC_ClusterMemb))
+
+mappingIBS_IBSHC_ClusterMemb$fb_ratio <- fb_ratio[,1]
+# summary(lm(mappingIBS_IBSHC_ClusterMemb[,34]~ as.factor(mappingIBS_IBSHC_ClusterMemb[,3])))
+# Call:
+#   lm(formula = mappingIBS_IBSHC_ClusterMemb[, 34] ~ as.factor(mappingIBS_IBSHC_ClusterMemb[, 
+#                                                                                            3]))
+# 
+# Residuals:
+#   Min       1Q   Median       3Q      Max 
+# -1.59543 -0.48184 -0.01313  0.50112  2.05991 
+# 
+# Coefficients:
+#   Estimate Std. Error t value Pr(>|t|)  
+# (Intercept)                                    -0.3409     0.1305  -2.611   0.0107 *
+#   as.factor(mappingIBS_IBSHC_ClusterMemb[, 3])2  -0.1510     0.1649  -0.916   0.3625  
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 0.7268 on 81 degrees of freedom
+# Multiple R-squared:  0.01025,	Adjusted R-squared:  -0.001974 
+# F-statistic: 0.8385 on 1 and 81 DF,  p-value: 0.3625
+
+boxplot(mappingIBS_IBSHC_ClusterMemb[,34] ~ mappingIBS_IBSHC_ClusterMemb[,3])
+p <- ggplot(mappingIBS_IBSHC_ClusterMemb, aes(factor(Group), fb_ratio))
+q <- p + geom_boxplot(aes(fill = factor(Group)))
+ggsave(q, file="FB_ratio_boxplot_Group.png")
+
+
+ma.phylum1<-t(ma.phylum)
+match(row.names(ma.phylum1), row.names(littleIbsMapping))
+littleIbsMapping<-littleIbsMapping[row.names(ma.phylum1),]
+ma.phylum1<-as.data.frame(ma.phylum1)
+littleIbsMapping$FBRatio<-ma.phylum1$'k__Bacteria; p__Firmicutes'/ma.phylum1$'k__Bacteria; p__Bacteroidetes'
+littleIbsMapping$FBRatio<-as.numeric(as.character(littleIbsMapping$FBRatio))
+littleIbsMapping<-as.data.frame(littleIbsMapping)
+
+t.test(littleIbsMapping[,31]~ littleIbsMapping[,7])
+boxplot(littleIbsMapping[,31]~ littleIbsMapping[,7])
+
+#mean in group HC mean in group IBS 
+#       0.9491604         0.7893911  p-value = 0.4082
+
+
+summary(aov(littleIbsMapping[,31]~ littleIbsMapping[,8]))
+littleIbsMapping[,8]<-gsub("U","M",littleIbsMapping[,8])
+#p=0.807
+boxplot(littleIbsMapping[,31]~ littleIbsMapping[,8])
+summary(aov(littleIbsMapping[,31]~ littleIbsMapping[,25]))
+#7.17e-07
+boxplot(littleIbsMapping[,31]~ littleIbsMapping[,25])
+
+
+boxplot(littleIbsMapping[,31]~ littleIbsMapping[,7])
+
+t.test(littleIbsMapping[,31]~ littleIbsMapping[,9])
+boxplot(littleIbsMapping[,31]~ littleIbsMapping[,9])
+
+
+t.test(littleIbsMapping[littleIbsMapping$Dx=="IBS",31]~ littleIbsMapping[littleIbsMapping$Dx=="IBS",9])
+boxplot(littleIbsMapping[littleIbsMapping$Dx=="IBS",31]~ littleIbsMapping[littleIbsMapping$Dx=="IBS",9])
+
+t.test(littleIbsMapping[littleIbsMapping$Dx=="HC",31]~ littleIbsMapping[littleIbsMapping$Dx=="HC",9])
+boxplot(littleIbsMapping[littleIbsMapping$Dx=="HC",31]~ littleIbsMapping[littleIbsMapping$Dx=="HC",9])
+
+
+```
+
+
+
+```{r}
+P<-ggplot(data2, aes(data2[,grep("200a",colnames(data2))],data3[,j])) + geom_point(size=4) 
+    q<-P+geom_point(aes(color=as.factor(data3$Group)))+ xlab(colnames1[i]) + ylab(colnames1[j])
+```
+
+<!-- not recommended -->
+```{r}
+# x = phyloseq object; y = variable of Interest
+richnessDiff <- function(x,y) {
+  library(limma)
+  rich <- estimate_richness(x, split = TRUE, measures = NULL)
+  rich$se.chao1 <- NULL
+  rich$se.ACE <- NULL
+  rich$y <- y
+  col.rich <- colnames(rich) 
+  sig1 <- matrix(NA, nrow = 7, ncol=2)
+  row.names(sig1) <- colnames(rich)[1:7]
+  colnames(sig1) <- c("RSquared", "P.Value")
+for (i in 1:7) {
+  sig1[i,1] <- round( summary(lm(rich[,i] ~ y, data = rich))$  
+                           coefficients[2,4],4)
+  sig1[i,2] <- round( summary(lm(rich[,i] ~ y, data = rich))$ r.squared,4)
+}
+      
+return(sig1)
+}
+
+richnessDiff(physeq, sample_data(x)$Dx)
+
+
+```
+
+
+

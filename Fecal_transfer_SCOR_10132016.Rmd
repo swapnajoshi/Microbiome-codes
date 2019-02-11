@@ -1,0 +1,137 @@
+---
+title: "IBS_microbiome_score_fecal_transfer_Selection"
+author: "Swapna Mahurkar-Joshi"
+date: "October 13, 2016"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+setwd("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/")
+clost <- read.csv("SCOR clostridiales_new.csv", row.names = 1); dim(clost)
+allSamp <- read.csv("Biopsy Blood List.csv")
+clost.hc <- subset(clost, clost$Group == "HC")
+allSamp.clost.hc <- allSamp[allSamp[,1]%in%row.names(clost.hc),]
+row.names(allSamp.clost.hc) <- allSamp.clost.hc[,1]
+allSamp.clost.hc <- allSamp.clost.hc[row.names(clost.hc),]
+match(row.names(clost.hc), row.names(allSamp.clost.hc))
+clost$Gender[1:35] <-  allSamp.clost.hc$Gender
+```
+
+You can also embed plots, for example:
+
+```{r, echo=FALSE}
+# figures for groups with HC for clostridiales
+
+library(ggplot2)
+
+p <- ggplot(clost, aes(BH.subgroup, Clostridiales_fraction))
+p + stat_summary(fun.data = min.mean.sd.max, geom = "boxplot") + geom_jitter(aes(color = Clostridiales_group), position=position_jitter(width=.2), size=3) + ggtitle("anova p value = 0.48") + xlab("Group") + ylab("Clostridiales_Fraction")
+ggsave ("clostridiales_HC_group1.png")
+summary(aov(clost$Clostridiales_fraction ~ as.factor(clost$BH.subgroup)))
+
+# figures for groupsfor clostridiales shape for gender
+# clost.ibs <- subset(clost, clost$Group != "HC"); dim(clost.ibs)
+
+p <- ggplot(clost, aes(BH.subgroup, Clostridiales_fraction))
+p1 <- p + stat_summary(fun.data = min.mean.sd.max, geom = "boxplot") + geom_jitter(aes(color = Clostridiales_group, shape = Gender), position=position_jitter(width=.2), size=3) + ggtitle("anova p value = 0.48") + xlab("Group") + ylab("Clostridiales_Fraction")
+ggsave ("clostridiales_Gender_BH1.png")
+# summary(aov(clost$Clostridiales_fraction ~ as.factor(clost$BH.subgroup)))
+
+# figures for females for clostridiales
+clost.f <- subset(clost, clost$Gender == "F"); dim(clost.f)
+
+p <- ggplot(clost.f, aes(BH.subgroup, Clostridiales_fraction))
+p + stat_summary(fun.data = min.mean.sd.max, geom = "boxplot") + geom_jitter(aes(color = Clostridiales_group), position=position_jitter(width=.2), size=3) + ggtitle("anova p value=0.86") + xlab("Group") + ylab("Clostridiales_Fraction")
+ggsave ("clostridiales_Females_BH1.png")
+summary(aov(clost.f$Clostridiales_fraction ~ as.factor(clost.f$BH.subgroup)))
+
+# p values for HC vs other groups
+fisher.test(clost$Group, clost$Clostridiales_group)
+# Fisher's Exact Test for Count Data
+# 
+# data:  clost$Group and clost$Clostridiales_group
+# p-value = 0.02813
+# alternative hypothesis: true odds ratio is not equal to 1
+# 95 percent confidence interval:
+#  0.09213194 0.95091767
+# sample estimates:
+# odds ratio 
+#  0.3105031 
+
+fisher.test(clost.ibs$BH.subgroup, clost.ibs$Clostridiales_group)
+# data:  clost.ibs$BH.subgroup and clost.ibs$Clostridiales_group
+# p-value = 0.07884
+# alternative hypothesis: two.sided
+
+# p values for HC and IBS-D
+clost.ibsD_hc <- subset(clost, clost$BH.subgroup == "IBS-D" | clost$BH.subgroup == "HC"); dim(clost.ibsD_hc)
+p <- ggplot(clost.ibsD_hc, aes(BH.subgroup, Clostridiales_fraction))
+p + stat_summary(fun.data = min.mean.sd.max, geom = "boxplot") + geom_jitter(aes(color = Clostridiales_group), position=position_jitter(width=.2), size=3) + ggtitle("t test p value = 0.16") + xlab("Group") + ylab("Clostridiales_Fraction")
+ggsave("IBS-D HC.png")
+t.test(clost.ibsD_hc$Clostridiales_fraction ~ as.factor(clost.ibsD_hc$BH.subgroup))
+
+fisher.test(clost.ibsD_hc$BH.subgroup, clost.ibsD_hc$Clostridiales_group)
+# 	Fisher's Exact Test for Count Data
+# 
+# data:  clost.ibsD_hc$BH.subgroup and clost.ibsD_hc$Clostridiales_group
+# p-value = 0.004119
+# alternative hypothesis: two.sided
+# P values for females with hc 
+
+
+fisher.test(clost.f$BH.subgroup, clost.f$Clostridiales_group)
+
+t.test( as.numeric(clost.ibsD_hc$Clostridiales_fraction)~ as.factor(clost.ibsD_hc$BH.subgroup))
+
+min.mean.sd.max <- function(x) {
+  r <- c(min(x), mean(x) - sd(x), mean(x), mean(x) + sd(x), max(x))
+  names(r) <- c("ymin", "lower", "middle", "upper", "ymax")
+  r
+}
+
+# # ggplot code
+# p1 <- ggplot(aes(y = Clostridiales_fraction, x = as.factor(BH.subgroup)), data = clost.ibsD_hc)
+#  p1 + stat_summary(fun.data = min.mean.sd.max, geom = "boxplot") + geom_jitter(aes(color = Clostridiales_group), position=position_jitter(width=.2), size=3) + ggtitle("Boxplot") + xlab("Group") + ylab("Clostridiales_Fraction")
+# 
+
+```
+
+
+```{r}
+
+# figures for females for clostridiales
+clost.d.f <- subset(clost.ibsD_hc, clost.ibsD_hc$Gender == "F"); dim(clost.d.f)
+t.test(clost.d.f$Clostridiales_fraction ~ as.factor(clost.d.f$BH.subgroup))
+
+p <- ggplot(clost.d.f, aes(BH.subgroup, Clostridiales_fraction))
+p + stat_summary(fun.data = min.mean.sd.max, geom = "boxplot") + geom_jitter(aes(color = Clostridiales_group), position=position_jitter(width=.2), size=3) + ggtitle("t test P value =0.38") + xlab("Group") + ylab("Clostridiales_Fraction")
+ggsave ("clostridiales_Females_BH_ibsd.png")
+
+## male
+
+# figures for males for clostridiales
+clost.m <- subset(clost, clost$Gender == "M"); dim(clost.m)
+
+p <- ggplot(clost.m, aes(BH.subgroup, Clostridiales_fraction))
+p + stat_summary(fun.data = min.mean.sd.max, geom = "boxplot") + geom_jitter(aes(color = Clostridiales_group), position=position_jitter(width=.2), size=3) + ggtitle("anova p value=0.35") + xlab("Group") + ylab("Clostridiales_Fraction")
+ggsave ("clostridiales_males_BH1.png")
+summary(aov(clost.m$Clostridiales_fraction ~ as.factor(clost.m$BH.subgroup)))
+
+
+##
+# figures for females for clostridiales
+clost.d.m <- subset(clost.ibsD_hc, clost.ibsD_hc$Gender == "M"); dim(clost.d.m)
+t.test(clost.d.m$Clostridiales_fraction ~ as.factor(clost.d.m$BH.subgroup))
+
+p <- ggplot(clost.d.m, aes(BH.subgroup, Clostridiales_fraction))
+p + stat_summary(fun.data = min.mean.sd.max, geom = "boxplot") + geom_jitter(aes(color = Clostridiales_group), position=position_jitter(width=.2), size=3) + ggtitle("t test P value =0.26") + xlab("Group") + ylab("Clostridiales_Fraction")
+ggsave ("clostridiales_males_BH_ibsd.png")
+fisher.test(clost.m$BH.subgroup, clost.m$Clostridiales_group)
+fisher.test(clost.d.m$BH.subgroup, clost.d.m$Clostridiales_group)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

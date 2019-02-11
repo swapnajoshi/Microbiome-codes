@@ -1,0 +1,82 @@
+---
+title: "Clostridiales"
+author: "Swapna Mahurkar-Joshi"
+date: "October 12, 2016"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+clost <- read.csv("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/SCOR clostridiales.csv", row.names = 1)
+
+
+
+```
+
+You can also embed plots, for example:
+
+```{r, echo=FALSE}
+library(ggplot2)
+clost.ibs <- subset(clost, clost$Group!="HC")
+fisher.test(clost.ibs$BH.subgroup, clost.ibs$Clostridiales_groups)
+# Fisher's Exact Test for Count Data
+# 
+# data:  clost.ibs$BH.subgroup and clost.ibs$Clostridiales_groups
+# p-value = 0.07884
+# alternative hypothesis: two.sided
+
+fisher.test(clost.ibs$Severity, clost.ibs$Clostridiales_groups)
+# Fisher's Exact Test for Count Data
+# 
+# data:  clost.ibs$Severity and clost.ibs$Clostridiales_groups
+# p-value = 0.1881
+# alternative hypothesis: two.sided
+
+
+p <- ggplot(clost, aes(factor(BH.subgroup), Clostridiales_fraction))
+q <- p + geom_boxplot(aes(fill = factor(Clostridiales_groups)))
+ggsave(q, file ="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/Clostridiales_high_low_bh.png" )
+
+
+p <- ggplot(clost.ibs, aes(factor(Severity), Clostridiales_fraction))
+q <- p + geom_boxplot(aes(fill = factor(Clostridiales_groups)))
+ggsave(q, file ="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/Clostridiales_high_low_severity.png" )
+
+p <- ggplot(clost.ibs, aes(factor(X), Clostridiales_fraction))
+q <- p + geom_boxplot(aes(fill = factor(Clostridiales_groups)))
+ggsave(q, file ="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/Clostridiales_high_low_bh.png" )
+
+
+p <- ggplot(clost, aes(factor(BH.subgroup), Clostridiales_fraction))
+q <- p + geom_jitter(size =2.5, width = 0.25, aes(color = factor(Clostridiales_groups)))
+ggsave(q, file ="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/Clostridiales_jitter_bh.png" )
+p <- ggplot(clost, aes(factor(Severity), Clostridiales_fraction))
+q <- p + geom_jitter(size =2.5, width = 0.25, aes(color = factor(Clostridiales_groups)))
+ggsave(q, file ="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/Clostridiales_jitter_severity.png" )
+
+
+
+clost.meth <- read.csv("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/Copy of SCOR clostridiales-1.csv", row.names = 1)
+clost.ibs <- subset(clost.meth, clost.meth$Group!="HC")
+
+
+p <- ggplot(clost.ibs, aes(factor(BH.subgroup), Clostridiales_fraction))
+q <- p + geom_jitter(size =2.5, width = 0.25, aes(color = factor(meth_group)))
+ggsave(q, file ="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/meth_jitter_bh.png" )
+p <- ggplot(clost.ibs, aes(factor(Severity), Clostridiales_fraction))
+q <- p + geom_jitter(size =2.5, width = 0.25, aes(color = factor(meth_group)))
+ggsave(q, file ="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/fecal_trasfer_subjects/meth_jitter_severity.png" )
+
+
+```
+
+```{r}
+S_IBSD = c("A5703", "A6242", "A6095", "A6099", "A6116")
+S_HC = c("A6234", "A6173", "A6238", "A6069", "A6330")
+clost
+
+```
+

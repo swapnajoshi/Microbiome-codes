@@ -1,0 +1,180 @@
+---
+title: "miRNA_microbiome_iCluster"
+author: "Swapna Mahurkar-Joshi"
+date: "August 24, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data import
+
+```{r}
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/miRNAMicrobiomeDFlist.rda")
+miRNAMicrobiomeDFlist[[2]] <- miRNAMicrobiomeDFlist[[2]][row.names(miRNAMicrobiomeDFlist[[1]]),]
+colnames(miRNAMicrobiomeDFlist[[2]]) <- paste(paste(matrix(unlist(strsplit(colnames(miRNAMicrobiomeDFlist[[2]]), ";")), ncol = 7, byrow = TRUE)[,5],matrix(unlist(strsplit(colnames(miRNAMicrobiomeDFlist[[2]]), ";")), ncol = 7, byrow = TRUE)[,6], sep = "_"),matrix(unlist(strsplit(colnames(miRNAMicrobiomeDFlist[[2]]), ";")), ncol = 7, byrow = TRUE)[,7],sep = "_")
+```
+
+# iCluster packge
+
+```{r}
+# install.packages("iCluster")
+# library(iCluster)
+library(foreach) 
+library(doSNOW) 
+cl <- makeCluster(2) 
+registerDoSNOW(cl)
+library(lattice)
+library(ggplot2)
+library(cowplot)
+
+```
+# Scale the lists
+```{r}
+miRNAMicrobiomeDFlist_scaled <- list()
+miRNAMicrobiomeDFlist_scaled[[1]] <- apply(miRNAMicrobiomeDFlist[[1]],2, scale)
+miRNAMicrobiomeDFlist_scaled[[2]] <- apply(miRNAMicrobiomeDFlist[[2]],2, scale)
+row.names(miRNAMicrobiomeDFlist_scaled[[1]]) <- row.names(miRNAMicrobiomeDFlist[[1]])
+row.names(miRNAMicrobiomeDFlist_scaled[[2]]) <- row.names(miRNAMicrobiomeDFlist[[2]])
+```
+
+```{r}
+fit=iCluster2(datasets=miRNAMicrobiomeDFlist, k=3)
+plotHeatmap(fit, miRNAMicrobiomeDFlist_scaled)
+plotiCluster(fit,label=row.names(miRNAMicrobiomeDFlist[[2]]))
+```
+
+###################################################
+```{r}
+# source("http://bioconductor.org/biocLite.R")
+# biocLite("iClusterPlus")
+library(iClusterPlus)
+```
+
+```{r}
+set.seed(2210)
+fit.single=iClusterPlus(dt1=miRNAMicrobiomeDFlist_scaled[[1]],dt2=miRNAMicrobiomeDFlist_scaled[[2]], type=c("gaussian","gaussian"),K=2,maxiter=10)
+```
+
+```{r}
+set.seed(2210)
+date()
+
+for(k in 1:5) {
+  cv.fit = tune.iClusterPlus(cpus=1, dt1 = miRNAMicrobiomeDFlist_scaled[[1]],
+  dt2=miRNAMicrobiomeDFlist_scaled[[2]], type=c("gaussian","gaussian"), 
+  K=k, n.lambda=NULL, scale.lambda=c(1,1),maxiter=20)
+  
+  save(cv.fit, file=paste("cv.fit.k",k,".Rdata",sep=""))
+}
+
+output=alist()
+files=grep("cv.fit",dir())
+for(i in 1:length(files)){
+  load(dir()[files[i]])
+  output[[i]]=cv.fit
+}
+
+nLambda = nrow(output[[1]]$lambda)
+nK = length(output)
+BIC = getBIC(output)
+devR = getDevR(output)
+
+
+minBICid = apply(BIC,2,which.min)
+devRatMinBIC = rep(NA,nK)
+for(i in 1:nK){
+  devRatMinBIC[i] = devR[minBICid[i],i]
+}
+
+clusters=getClusters(output)
+rownames(clusters)=rownames(miRNAMicrobiomeDFlist_scaled[[1]])
+colnames(clusters)=paste("K=",2:(length(output)+1),sep="")
+write.table(clusters, file="clusterMembership.txt",sep='\t',quote=F)
+k=2
+best.cluster=clusters[,k]
+best.fit=output[[k]]$fit[[which.min(BIC[,k])]]
+
+plot(1:(nK+1),c(0,devRatMinBIC),type="b",xlab="Number of clusters (K+1)",  ylab="%Explained Variation")
+```
+
+```{r}
+col.scheme = alist()
+col.scheme[[1]] = bluered(256)
+col.scheme[[2]] = bluered(256)
+plotHeatmap(fit = best.fit,datasets=list(miRNAMicrobiomeDFlist_scaled[[1]],miRNAMicrobiomeDFlist_scaled[[2]]), col.scheme = col.scheme,sparse=NULL,cap=NULL)
+```
+# order of samples; 
+```{r}
+cluMemb <- as.data.frame(clusters[,2]); colnames(cluMemb) <- "Cluster_membership"
+order(best.fit$clusters)
+```
+# Association wit clinical characteristics
+```{r}
+
+clin <- read.csv("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/ibs.mapping_new.csv", row.names = 1)
+df1 <- clin[,c(6,8,9,10,18,30,31,32, 33, 39, 41, 42,51, 76,77)]; row.names(df1) <- df1$NDPNum
+df2 <- df1[row.names(df1)%in%row.names(cluMemb),]
+df2 <- df2[row.names(cluMemb),]
+if(all.equal(row.names(df2), row.names(cluMemb))) {df3 <- cbind(df2, cluMemb)}
+df3 <- df3[,-c(1,2,3,4)]
+df3$Cluster_membership <- as.factor(df3$Cluster_membership)
+aovTestClin <- as.data.frame(apply(df3[,c(1:11)],2, function(x,y) {summary(aov(x~y))[[1]][["Pr(>F)"]][1]}, df3[,12])); 
+
+row.names(aovTestClin) <-  colnames(df3)[1:11]
+colnames(aovTestClin) <- "Anova P value"
+library(knitr)
+kable(round(aovTestClin,3))
+```
+
+```{r}
+df3 <- as.data.frame(df3)
+df3$Dx <- df2$Dx
+for (i in 1:11)  local({
+  y <- df3[, i]
+  pvalue <- summary(aov(y ~ df3$Cluster_membership))[[1]][["Pr(>F)"]][1]
+  pvalueformatted <- format(pvalue, digits=3, nsmall=1.5)
+  g <- ggplot(df3, aes(x=df3$Cluster_membership, y=y))    + geom_boxplot(outlier.color = NA) + geom_jitter(aes(color = df3$Dx)) + labs(x = "Cluster_membership", y = colnames(df3)[i]) +  geom_text(aes(label = paste(" p = ", pvalueformatted), x =1.5, y = max(y, na.rm = TRUE)+ (max(y, na.rm = TRUE))/5) ,  na.rm=TRUE)
+  print(i)
+   print(g)
+  assign(colnames(df3)[i], g, pos =1) #generate an object for each plot
+  })
+# paste(eval(noquote(colnames(metDat_c.ibs1))),collapse = ","), ncol = 4)
+
+ggsave("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmiRNAproject/miRNA_microbiome_paper/iclusterplus_analysis/plots_clin_icluster.png",width = 9, height = 8,dpi = 220, units = "in", plot_grid( "Age", "BSQ_OverallSx", "BSQ_AbdPain", "BSQ_Bloating","BSQ_UsualSeverity",  "ETI_Sexual_Score",   "HAD_Anxiety", "HAD_Depression","ACE_Score", "VSI_Score","PSS_Score" , ncol = 2))
+
+```
+# categorical variables
+
+```{r}
+if(all.equal(row.names(df2), row.names(cluMemb))) {df3 <- cbind(df2, cluMemb)}
+df3$Bowel.Habit <- factor(df3$Bowel.Habit)
+df3$Dx <- as.factor(df3$Dx)
+df3$Gender <- as.factor(df3$Gender)
+
+fisherTestCat <- apply(df3[,c(2:4)],2, function(x,y) {fisher.test(x,y)$p.value}, df3[,16])
+# 
+# colnames(fisherTestCat) <-  c("Dx", "Bowel habit","Sex")
+fisherTestCat
+
+```
+
+```{r}
+mat1 <- t(miRNAMicrobiomeDFlist_scaled[[1]][order(best.fit$clusters),])
+df3_ordered <- df3[order(best.fit$clusters),]
+df3_ordered$Dx_color <-  ifelse(df3_ordered$Dx=="IBS","magenta","black")
+df3_ordered$BH_color <-  ifelse(df3_ordered$Bowel.Habit=="C","red", ifelse(df3_ordered$Bowel.Habit=="D", "blue", "green"))
+df3_ordered$Gender_color <- ifelse(df3_ordered$Gender=="F","pink","black")
+df3_ordered$Cluster_color <- ifelse(df3_ordered$Cluster_membership==1,"gray", ifelse(df3_ordered$Cluster_membership==2,"blue","green"))
+df3_ordered$white_col <- c(rep("white",44))
+colMat <- as.matrix(df3_ordered[,c(17,17,21,18,18,21,19,19,21,20,20)])
+
+hm1<-heatmap.3(mat1,na.rm=TRUE,scale="none", ColSideColors = colMat, Colv=NA,Rowv=NA,breaks = seq(0,1,0.01), cexRow=1,cexCol=1, main = "iClusterPlus_clusters")
+```
+
+```{r}
+heatmap.3()
+```
+

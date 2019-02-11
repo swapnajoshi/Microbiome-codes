@@ -1,0 +1,793 @@
+---
+title: "microbiomeAnalysis"
+author: "Swapna Mahurkar-Joshi"
+date: "April 10, 2017"
+output:
+html_document: default
+pdf_document: default
+---
+
+# Reading in ibraries and data 
+```{r eval=TRUE, echo=FALSE,  results='hide',message=FALSE}
+
+rm(list=ls())
+
+# clustering
+library(WGCNA)
+library(flashClust)
+library(RColorBrewer)
+library(ggplot2)
+rm(list=ls())
+unwei.dm <- read.delim("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/unweighted_unifrac_dm.txt", row.names=1)
+
+# import mapping file
+
+map1 <- read.csv("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/mapping.bray_curtis1.csv",row.names=1)
+map2<-map1[row.names(map1)%in%colnames(unwei.dm),]
+map2<-map2[colnames(unwei.dm),]
+match(row.names(map2),colnames(unwei.dm))
+unwei.dm1<-as.dist(unwei.dm)
+set.seed(123)
+sampleTree = flashClust(unwei.dm1, method = 'complete')
+labels1=substr(row.names(map2),8,12)
+dat.ordered<-unwei.dm[sampleTree$order,]
+```
+
+
+# plot
+
+```{r message=FALSE}
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Heirarchical Clustering", sub="", xlab="", cex.lab = 1.5, cex.axis = 1.5, cex.main = 2, labels=labels1)
+abline(h = 0.76, col = "red")
+```
+
+# cluster membership
+```{r eval=TRUE, results='hide',message=FALSE}
+clust1 = cutreeStatic(sampleTree, cutHeight = 0.76, minSize = 1)
+table(clust1)
+lab<-map2[sampleTree$labels,]$Dx
+lab1<-map2[sampleTree$labels,]$NDPNum
+lab2<-map2[sampleTree$labels,]$BH
+df2<-as.data.frame(cbind(clust1,as.character(lab),as.character(lab1),as.character(lab2)))
+# df2[df2$clust1==3 & df2$V2=="IBS",]
+# head(df2)
+
+# rainbow(n=6)
+# [1] "#FF0000FF" "#FFFF00FF" "#00FF00FF" "#00FFFFFF" "#0000FFFF" "#FF00FFFF"
+
+df2$color1<-NA
+for ( i in 1: 85)
+{if (df2[i,1]=="1")
+{df2[i,5]<-"green"}
+  else if (df2[i,1]=="2")
+  {df2[i,5]<-"pink"}
+  else if (df2[i,1]=="3")
+  {df2[i,5]<-"dark blue"}
+}
+
+df2$colorBH<-NA
+for ( i in 1: 85)
+{if (df2[i,4]=="N")
+{df2[i,6]<-"cyan"}
+  else if (df2[i,4]=="C")
+  {df2[i,6]<-"yellow"}
+   else if (df2[i,4]=="D")
+   {df2[i,6]<-"dark green"}
+  else if (df2[i,4]=="M")
+  {df2[i,6]<-"dark blue"}
+}
+
+df2$colorDx<-NA
+for ( i in 1: 85)
+{if (df2[i,2]=="HC")
+{df2[i,7]<-"cyan"}
+  else if (df2[i,2]=="IBS")
+  {df2[i,7]<-"red"}
+}
+```
+
+```{r message=FALSE}
+library(dendextend)
+png("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/unweightedUnifracDistCompHier.png", res = 200, height = 2000, width = 2500)
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 0.5, cex.axis = 1.0, cex.main = 1.5, labels=df2$V2)
+abline(h = 0.76, col = "red")
+colored_bars(colors= df2[,c(5,6,7)], dend = sampleTree, y_shift = 0.4, rowLabels = c("Cluster", "BH","Dx"), sort_by_labels_order = TRUE)
+dev.off()
+
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Heirachical Clustering", sub="", xlab="", cex.lab = 0.5, cex.axis = 1.0, cex.main = 1.5, labels=df2$V2)
+abline(h = 0.76, col = "red")
+colored_bars(colors= df2[,c(5,6,7)], dend = sampleTree, y_shift = 0.4, rowLabels = c("Cluster", "BH", "Dx"), sort_by_labels_order = TRUE)
+```
+
+```{r eval=TRUE, results='hide',message=FALSE}
+# Cluster membership with IBS as well as healthy controls
+# remove all the old cluster memberships
+mapping.new <- map2[,c(14:17,19,21:36)]
+mapping.new$unWeiHieComplClu<-clust1
+
+write.csv(mapping.new, file="C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/technicallyCorrectData/biopsyMicrobiome/mappingNewUnWeiHieComplClu.csv")
+
+```
+
+```{r message=FALSE}
+mapping.new$unWeiHieComplClu <- as.factor(mapping.new$unWeiHieComplClu)
+mapping.new1 <- subset(mapping.new, mapping.new$Group == 2)
+fisher.test(as.factor(mapping.new1$BH), as.factor(mapping.new1$unWeiHieComplClu))
+fisher.test(as.factor(mapping.new1$Sex), as.factor(mapping.new1$unWeiHieComplClu))
+```
+
+# correlation with clinical traits
+```{r message=FALSE}
+mapping.new1<- as.data.frame(mapping.new1)
+lms <- lapply(colnames(mapping.new1), function(x) {
+  form <- paste0(x, " ~ as.factor(mapping.new1$unWeiHieComplClu)")
+  lm(form, data=mapping.new1)
+})
+
+p.traits1<-matrix(NA, nrow=22, ncol=1)
+row.names(p.traits1)<-colnames(mapping.new1)
+p.traits1[,1] <- sapply(lms, function(x) {
+  pf(summary(x)$fstatistic[1],summary(x)$fstatistic[2],summary(x)$fstatistic[3],lower.tail=FALSE) 
+})
+
+library(ggplot2)
+
+# for(y in 1:21){ 
+#   x = 22
+#   plotAllBox(map4_numTraits)
+#   }
+
+p4 <- ggplot(mapping.new1, aes(x=as.factor(unWeiHieComplClu), y = BSQ_Bloating))  + geom_boxplot() + geom_jitter()  +  ggtitle("bloating by cluster") +    theme(legend.position="none")   
+# p5 <- ggplot(mapping.new1, aes(x=as.factor(unWeiHieComplClu), y = ETI_Sexual_Score))  + geom_boxplot() + geom_jitter()  +  ggtitle("ETI_Sexual_Score by cluster") +    theme(legend.position="none")   
+p.traits1
+p4
+
+# exclude cluster 3
+
+mapping.new12 <- subset(mapping.new1, mapping.new1$unWeiHieComplClu!=3)
+summary(lm(formula = mapping.new12$BSQ_Bloating ~ as.factor(mapping.new12$unWeiHieComplClu)))
+p4 <- ggplot(mapping.new12, aes(x=as.factor(unWeiHieComplClu), y = BSQ_Bloating))  + geom_boxplot() + geom_jitter()  +  ggtitle("bloating by cluster") +    theme(legend.position="none")  
+
+```
+
+# Import otu tables that are output of QIIME
+
+```{r eval=TRUE, echo=FALSE, results='hide',message=FALSE}
+library(phyloseq)
+# otu table
+header1 <- scan("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/merged_otu_table.txt", nlines = 2, what = character())[3:88]
+genus <- read.table("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/merged_otu_table.txt", sep="\t", check.names = FALSE,row.names = 1)	
+colnames(genus) <- header1
+genus1 <- genus[,-dim(genus)[2]]
+colnames(genus1) <- gsub("A5169Biopsy", "Biopsy.A5169", colnames(genus1))
+colnames(genus1) <- gsub("A6244Biopsy", "Biopsy.A6244", colnames(genus1))
+colnames(genus1) <- gsub("A5501Biopsy", "Biopsy.A5501", colnames(genus1))
+colnames(genus1) <- gsub("A6379Biopsy","Biopsy.A6379", colnames(genus1))
+colnames(genus1) <- substr(colnames(genus1),8,12)
+tax <- function(d,x) {y <-strsplit(x, ";")
+z <- matrix(unlist(y), nrow = length(x), ncol = 7, byrow = TRUE)
+rownames(z) <- d
+colnames(z) <- c("Kingdom","Phylum","Class", "Order","Family", "Genus", "Species")
+return(z)
+}
+taxa_mat <- tax(row.names(genus1), as.character(genus$ConsensusLineage))
+
+```
+
+## Technically correct data 
+
+```{r results='hide',message=FALSE}
+
+traits_mat <- read.csv("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/technicallyCorrectData/biopsyMicrobiome/mappingNewUnWeiHieComplClu.csv", row.names =1)
+
+traits_mat$Sex <- as.factor(traits_mat$Sex)
+traits_mat$BH <- as.factor(traits_mat$BH)
+traits_mat$Group <- as.factor(traits_mat$Group)
+traits_mat$Dx_Gender_interaction <- interaction(traits_mat$Group, 
+                                                traits_mat$Sex)
+row.names(traits_mat) <- gsub("A5169Biopsy", "Biopsy.A5169", row.names(traits_mat))
+row.names(traits_mat) <- gsub("A6244Biopsy", "Biopsy.A6244", row.names(traits_mat))
+row.names(traits_mat) <- gsub("A5501Biopsy", "Biopsy.A5501", row.names(traits_mat))
+row.names(traits_mat) <- gsub("A6379Biopsy","Biopsy.A6379",  row.names(traits_mat))
+row.names(traits_mat) <- substr(row.names(traits_mat),8,12)
+traits_mat <- traits_mat[colnames(genus1),]
+match(row.names(traits_mat), colnames(genus1))
+
+tree1 <- read_tree_greengenes("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/rawData/gg_13_5_unannotated.tree.gz")
+
+class(tree1)
+ntaxa(tree1)
+
+save(taxa_mat, traits_mat, genus1, tree1, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/technicallyCorrectData/biopsyMicrobiome/ibsMicroLevel2Data.Rda")
+```
+
+## Consitant data
+
+```{r eval=TRUE, results='hide', message=FALSE}
+# Phyloseq object
+otus <- otu_table(genus1, taxa_are_rows = TRUE)
+tax1 <- tax_table(taxa_mat)
+traits <- sample_data(traits_mat)
+
+physeq <- phyloseq(otus, tax1, traits, tree1)
+physeq
+
+save(otus, tax1, traits, physeq, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/ibsMicroLevel3Data.Rda")
+```
+
+# Estimate richness (aplha diversity) before filtering or trimming, since it 
+# depends on singletons
+
+```{r message=FALSE}
+
+sample_data(physeq)$BH <- gsub(5,6,sample_data(physeq)$BH)
+rich <- estimate_richness(physeq, split = TRUE, measures = NULL)
+
+library(ggplot2)
+p <- plot_richness(physeq, "Group")
+p + geom_boxplot(data=p$data, aes(x=Group, y=value, color=NULL), alpha=0.1) 
+
+rich <- estimate_richness(physeq, split = TRUE, measures = NULL)
+rich.df <- rich
+rich.df$Group <- sample_data(physeq)$Group
+t.test(rich.df$Observed~rich.df$Group)
+
+
+p <- plot_richness(physeq, "BH")
+p + geom_boxplot(data=p$data, aes(x=BH, y=value, color=NULL), alpha=0.1) 
+
+p <- plot_richness(physeq, "as.factor(unWeiHieComplClu)")
+p + geom_boxplot(data=p$data, aes(x=as.factor(unWeiHieComplClu), y=value, color=NULL), alpha=0.1)
+
+```
+
+Filter taxa
+```{r eval=TRUE, results='hide',message=FALSE, echo=FALSE}
+PS = filter_taxa(physeq, function(x) sum(x > 3) > (0.2*length(x)), TRUE)
+
+# https://elifesciences.org/content/6/e21887
+# Standardize abundances to the median sequencing depth
+
+total = median(sample_sums(PS))
+standf = function(x, t=total) round(t * (x / sum(x)))
+PS1 = transform_sample_counts(PS, standf)
+
+# Filter the taxa using a cutoff of 3.0 for the Coefficient of Variation
+
+PS2 = filter_taxa(PS1, function(x) sd(x)/mean(x) > 3.0, TRUE)
+
+
+PS_b <- subset_taxa(PS2, Phylum == " p__Bacteroidetes")
+PS_f <- subset_taxa(PS2, Phylum == " p__Firmicutes")
+# ratio_fb <- 
+save(physeq, PS, PS1, PS2, PS_b, PS_f, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/ibsMicroFiltered.RData")
+
+```
+
+```{r eval=TRUE, results='hide',message=FALSE, echo=FALSE}
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/ibsMicroLevel3Data.Rda")
+
+```
+
+```{r}
+# install.packages("clValid")
+# library(clValid)
+# intern <- clValid(genus1, 2:6, clMethods = c("hierarchical","kmeans","pam"),                  validation="internal")
+# y
+# intern
+```
+
+```{r}
+set.seed(2210)
+
+phy = prune_taxa(taxa_sums(physeq) > 1, physeq); # remove 0 and singletons
+phylum_glom<-tax_glom(phy, taxrank="Phylum")
+```
+Run this to calculate % abundance in each group/cluster
+```{r eval=TRUE, results='hide',message=FALSE, echo=FALSE}
+# d.phylum <- scale(otu_table(phylum_glom),center=FALSE, scale=colSums(otu_table(phylum_glom)))
+# d.phylum <- otu_table(phylum_glom)
+# d.phylum.1 <- as.data.frame(d.phylum[,colnames(d.phylum) %in% row.names(sample_data(phy)[sample_data(phy)$unWeiHieComplClu == 1,])]); dim(d.phylum.1)
+# d.phylum.1$ave1 <- apply(d.phylum.1,1,mean)
+# d.phylum.1.ord <- d.phylum.1[order(-d.phylum.1$ave1),]
+# cbind(row.names(d.phylum.1.ord)[1:5],d.phylum.1.ord$ave1[1:5])
+# d.phylum.2 <- as.data.frame(d.phylum[,colnames(d.phylum) %in% row.names(sample_data(phy)[sample_data(phy)$unWeiHieComplClu == 2,])]); dim(d.phylum.2)
+# d.phylum.2$ave1 <- apply(d.phylum.2,1,mean)
+# d.phylum.2.ord <- d.phylum.2[order(-d.phylum.2$ave1),]
+# cbind(row.names(d.phylum.2.ord)[1:5],d.phylum.2.ord$ave1[1:5])
+# d.phylum.3 <- as.data.frame(d.phylum[,colnames(d.phylum) %in% row.names(sample_data(phy)[sample_data(phy)$unWeiHieComplClu == 3,])]); dim(d.phylum.3)
+# d.phylum.3$ave1 <- apply(d.phylum.3,1,mean)
+# d.phylum.3.ord <- d.phylum.3[order(-d.phylum.3$ave1),]
+# cbind(row.names(d.phylum.3.ord)[1:5],d.phylum.3.ord$ave1[1:5])
+
+```
+#1 Group
+```{r eval=TRUE, results='hide',message=FALSE, echo=FALSE}
+
+sample_data(phy)$Group<- as.factor(sample_data(phy)$Group)
+sample_data(phy)$Group <- relevel(sample_data(phy)$Group, ref = "1")
+
+
+# phylum level
+library(DESeq2)
+phylum_glom<-tax_glom(phy, taxrank="Phylum")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab1 = res[which(res$pvalue < alpha), ]
+# sigtab1 = cbind(as(sigtab1, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab1), ], "matrix"))
+head(sigtab1)
+
+# class level
+phylum_glom<-tax_glom(phy, taxrank="Class")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab2 = res[which(res$pvalue < alpha), ]
+sigtab2 = cbind(as(sigtab2, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab2), ], "matrix"))
+dim(sigtab2)
+
+# Order level
+phylum_glom<-tax_glom(phy, taxrank="Order")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab3 = res[which(res$pvalue < alpha), ]
+sigtab3 = cbind(as(sigtab3, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab3), ], "matrix"))
+dim(sigtab3)
+
+# Family level
+phylum_glom<-tax_glom(phy, taxrank="Family")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab4 = res[which(res$pvalue < alpha), ]
+sigtab4 = cbind(as(sigtab4, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab4), ], "matrix"))
+dim(sigtab4)
+
+# Genus level
+phylum_glom<-tax_glom(phy, taxrank="Genus")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab5 = res[which(res$pvalue < alpha), ]
+sigtab5 = cbind(as(sigtab5, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab5), ], "matrix"))
+dim(sigtab5)
+
+# Species level
+phylum_glom<-tax_glom(phy, taxrank="Species")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ Group)
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab6 = res[which(res$pvalue < alpha), ]
+sigtab6 = cbind(as(sigtab6, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab6), ], "matrix"))
+dim(sigtab6)
+
+# OTU level
+# sample_data(PS3)$Group<- as.factor(sample_data(PS3)$Group)
+# sample_data(PS3)$Group <- relevel(sample_data(PS3)$Group, ref = "1")
+diagdds = phyloseq_to_deseq2(phy, ~ Group)
+# calculate geometric means prior to estimate size factors
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab7 = res[which(res$pvalue < alpha), ]
+sigtab7 = cbind(as(sigtab7, "data.frame"), as(tax_table(phy)[rownames(sigtab7), ], "matrix"))
+dim(sigtab7)
+
+sigtab <- rbind(sigtab1,sigtab2,sigtab3,sigtab4,sigtab5,sigtab6,sigtab7)
+sigtab.padj <- subset(sigtab, sigtab$adjp<0.05)
+sigtab.padj
+write.csv(sigtab, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/associationsMicrobiome/biopsyMicrobiome/sig_adjP_Group_All_Taxa_levels_biopsy.csv")
+```
+# visualize OTUs that were significantly different between Groups
+```{r eval=TRUE, message=FALSE, echo=FALSE}
+theme_set(theme_bw())
+
+# Phylum order
+x = tapply(sigtab5$log2FoldChange, sigtab5$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab5$Genus = factor(as.character(sigtab5$Genus), levels=names(x))
+# Genus order
+x = tapply(sigtab5$log2FoldChange, sigtab5$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab5$Genus = factor(as.character(sigtab5$Genus), levels=names(x))
+sigtab5$Abundance <- sigtab5$baseMean
+library(ggplot2)
+p <- ggplot(sigtab5, aes(x=Genus, y=log2FoldChange, color=Phylum, size = as.numeric(Abundance))) + geom_point() + theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) 
+p
+ggsave(p, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/associationsMicrobiome/biopsyMicrobiome/log2FoldchangeGenusDxbiopsy.png")
+```
+
+#2 Cluster
+```{r eval=TRUE, message=FALSE, echo=FALSE}
+
+phyNo3 <- prune_samples(row.names(sample_data(phy)[sample_data(phy)$unWeiHieComplClu!=3,]),phy)
+sample_data(phyNo3)$unWeiHieComplClu <- as.factor(sample_data(phyNo3)$unWeiHieComplClu)
+sample_data(phyNo3)$unWeiHieComplClu <- relevel(sample_data(phyNo3)$unWeiHieComplClu, ref = "1")
+
+# phylum level
+library(DESeq2)
+phylum_glom<-tax_glom(phyNo3, taxrank="Phylum")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ unWeiHieComplClu)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab1 = res[which(res$pvalue < alpha), ]
+sigtab1 = cbind(as(sigtab1, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab1), ], "matrix"))
+dim(sigtab1)
+
+# class level
+phylum_glom<-tax_glom(phyNo3, taxrank="Class")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ unWeiHieComplClu)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab2 = res[which(res$pvalue < alpha), ]
+sigtab2 = cbind(as(sigtab2, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab2), ], "matrix"))
+dim(sigtab2)
+
+# Order level
+phylum_glom<-tax_glom(phyNo3, taxrank="Order")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ unWeiHieComplClu)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab3 = res[which(res$pvalue < alpha), ]
+sigtab3 = cbind(as(sigtab3, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab3), ], "matrix"))
+dim(sigtab3)
+
+# Family level
+phylum_glom<-tax_glom(phyNo3, taxrank="Family")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ unWeiHieComplClu)
+
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab4 = res[which(res$pvalue < alpha), ]
+sigtab4 = cbind(as(sigtab4, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab4), ], "matrix"))
+dim(sigtab4)
+
+# Genus level
+phylum_glom<-tax_glom(phyNo3, taxrank="Genus")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ unWeiHieComplClu)
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab5 = res[which(res$pvalue < alpha), ]
+sigtab5 = cbind(as(sigtab5, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab5), ], "matrix"))
+dim(sigtab5)
+
+# Species level
+phylum_glom<-tax_glom(phyNo3, taxrank="Species")
+diagdds = phyloseq_to_deseq2(phylum_glom, ~ unWeiHieComplClu)
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab6 = res[which(res$pvalue < alpha), ]
+sigtab6 = cbind(as(sigtab6, "data.frame"), as(tax_table(phylum_glom)[rownames(sigtab6), ], "matrix"))
+dim(sigtab6)
+
+# OTU level
+# sample_data(PS3)$unWeiHieComplClu<- as.factor(sample_data(PS3)$unWeiHieComplClu)
+# sample_data(PS3)$unWeiHieComplClu <- relevel(sample_data(PS3)$unWeiHieComplClu, ref = "1")
+diagdds = phyloseq_to_deseq2(phyNo3, ~ unWeiHieComplClu)
+# calculate geometric means prior to estimate size factors
+geoMeans = apply(counts(diagdds), 1, gm_mean)
+diagdds = estimateSizeFactors(diagdds, geoMeans = geoMeans)
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 0.05
+sigtab7 = res[which(res$pvalue < alpha), ]
+sigtab7 = cbind(as(sigtab7, "data.frame"), as(tax_table(phyNo3)[rownames(sigtab7), ], "matrix"))
+dim(sigtab7)
+
+sigtab <- rbind(sigtab1,sigtab2,sigtab3,sigtab4,sigtab5,sigtab6,sigtab7)
+sigtab.padj <- subset(sigtab, sigtab$adjp<0.05)
+write.csv(sigtab, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/associationsMicrobiome/biopsyMicrobiome/sig_adjP_unWeiHieComplCluNo3_merged_All_Taxa_levels_biopsy.csv")
+```
+# visualize OTUs that were significantly different between unWeiHieComplClus_merged
+```{r eval=TRUE,message=FALSE, echo=FALSE}
+theme_set(theme_bw())
+
+# Phylum order
+x = tapply(sigtab5$log2FoldChange, sigtab5$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab5$Genus = factor(as.character(sigtab5$Genus), levels=names(x))
+# Genus order
+x = tapply(sigtab5$log2FoldChange, sigtab5$Genus, function(x) max(x))
+x = sort(x, TRUE)
+sigtab5$Genus = factor(as.character(sigtab5$Genus), levels=names(x))
+sigtab5$Abundance <- sigtab5$baseMean
+library(ggplot2)
+p <- ggplot(sigtab5, aes(x=Genus, y=log2FoldChange, color=Phylum, size = as.numeric(Abundance))) + geom_point() + theme(axis.text.x = element_text(angle = -90, hjust = 0, vjust=0.5)) 
+p
+ggsave(p, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/associationsMicrobiome/biopsyMicrobiome/log2Foldchange_phylum_ClusterNo3.png")
+
+```
+F/B ratio
+```{r}
+phylum_glom<-tax_glom(phy, taxrank="Phylum")
+glomTax = tax_table(phylum_glom)[,"Phylum"]
+glomOTU = otu_table(phylum_glom)
+glomTable = merge(glomOTU,glomTax,by=0,all=TRUE)
+rownames(glomTable) = glomTable[,"Phylum"]
+glomTable$Row.names = NULL
+glomTable$Phylum = NULL
+
+# percentages rather than counts
+glomTable2 = glomTable / rep(colSums(glomTable), each = nrow(glomTable))
+glomTable3 = as.data.frame(t(glomTable2))
+colnames(glomTable3) <- gsub(" ","", colnames(glomTable3))
+glomTable3$unWeiHieComplClu <- sample_data(phy)$unWeiHieComplClu
+
+### bacteroidetes proteobacteria ratio
+glomTable3$bpRatio <-  glomTable3$p__Bacteroidetes/glomTable3$p__Proteobacteria
+summary(lm(glomTable3$bpRatio ~ as.factor(glomTable3$unWeiHieComplClu)))
+
+
+### bacteroidetes firmicutes ratio
+glomTable3$bfRatio <-  glomTable3$p__Bacteroidetes/glomTable3$p__Firmicutes
+summary(lm(glomTable3$bfRatio ~ as.factor(glomTable3$unWeiHieComplClu)))
+
+glomTable3$Group <- sample_data(phy)$Group
+glomTable3$BH <- sample_data(phy)$BH
+glomTable3$proteo <- ifelse(glomTable3$p__Proteobacteria>0.26,2,1)
+# glomTable3$FirmBac <- ifelse((glomTable3$p__Proteobacteria + glomTable3$p__Bacteroidetes)<0.80,2,1)
+
+ggplot(glomTable3,aes(p__Bacteroidetes , p__Firmicutes)) +   theme_bw() +  geom_point(size=2, color = glomTable3$proteo  )
+
+phyla1 <- rev(sort(colSums(glomTable3[glomTable3$unWeiHieComplClu==1,1:18])))
+phyla2 <- rev(sort(colSums(glomTable3[glomTable3$unWeiHieComplClu==2,1:18])))
+phyla3 <- rev(sort(colSums(glomTable3[glomTable3$unWeiHieComplClu==3,1:18])))
+
+phylum_glom<-tax_glom(phy, taxrank="Phylum")
+phySub <- prune_taxa(names(sort(taxa_sums(phylum_glom), TRUE))[1:3], phylum_glom) 
+phySub1 <- prune_samples(sample_data(phySub)$Group==2,phySub) 
+plot_bar(phySub1, "Phylum", fill="as.factor(Phylum)", facet_grid=~as.factor(unWeiHieComplClu))
+
+```
+Relative abundance plots
+```{r}
+
+```
+
+```{r eval=TRUE, results='hide',message=FALSE, echo=FALSE}
+genus_glom<-tax_glom(phy, taxrank="Genus")
+
+d.genus <- otu_table(genus_glom)
+d.genus <- d.genus[row.names(d.genus)%in%row.names(sigtab5),]
+gen.tax <- as.data.frame(tax_table(genus_glom)[row.names(tax_table(genus_glom))%in%row.names(sigtab5),][,c(2,6)])
+
+row.names(d.genus) <- paste(gen.tax[,1],gen.tax[,2], sep = "_")
+d.genus.t <- as.data.frame(t(d.genus))
+colnames(d.genus.t) <- gsub(" ", "", colnames(d.genus.t))
+```
+
+```{r eval=TRUE,message=FALSE}
+
+clinicaltraits <- sample_data(genus_glom)[sample_data(genus_glom)$Group == 2,c(4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)]
+d.genus.t <- d.genus.t[row.names(d.genus.t)%in% row.names(clinicaltraits),]
+colnames(d.genus.t)[7] <- gsub("_Eubacterium","",colnames(d.genus.t)[7])
+colnames(d.genus.t) <- gsub("\\[","",colnames(d.genus.t))
+colnames(d.genus.t) <- gsub("]","",colnames(d.genus.t))
+match(row.names(d.genus.t), row.names(clinicaltraits))
+df1 <- cbind(d.genus.t, clinicaltraits)
+
+
+  micro1 <- matrix(NA, ncol = dim(clinicaltraits)[2], nrow= dim(d.genus.t)[2])
+  row.names(micro1) <- colnames(df1)[1:dim(d.genus.t)[2]]
+  colnames(micro1) <- colnames(df1[,(dim(d.genus.t)[2]+1):((dim(d.genus.t)[2])+(dim(clinicaltraits)[2]))])
+for ( i in 1:dim(clinicaltraits)[2]){
+  lms <- lapply(colnames(d.genus.t), function(x,y) {
+  form <- paste0(x,"~", y)
+  lm(form, data = df1)
+},y = colnames(clinicaltraits)[i])
+
+micro1[,i] <- sapply(lms, function(x) {
+  pf(summary(x)$fstatistic[1],summary(x)$fstatistic[2],summary(x)$fstatistic[3],lower.tail=FALSE) 
+})
+}
+  
+micro1 <- as.data.frame(micro1)  
+micro1.sig <-  micro1[unique(c(which(micro1$Age<0.05), which(micro1$BMI<0.05), which(micro1$BSQ_OverallSx<0.05),which(micro1$BSQ_AbdPain<0.05),which(micro1$BSQ_Bloating<0.05),which(micro1$BSQ_UsualSeverity<0.05),which(micro1$BSQ_AgeOnset<0.05),which(micro1$BSQdrv_SxDurationYrs<0.05),which(micro1$ETI_Total_Score<0.05),which(micro1$HAD_Anxiety<0.05),which(micro1$HAD_Depression<0.05),which(micro1$ACE_Score<0.05),which(micro1$VSI_Score<0.05),which(micro1$PSS_Score<0.05), which(micro1$unWeiHieComplClu<0.05))),]
+write.csv(micro1, file = "C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/associationsMicrobiome/biopsyMicrobiome/traitsAssoGenusCluster.csv")
+micro1.sig 
+
+```
+
+# correlation of merged cluster with clinical traits
+```{r eval=TRUE, results='hide',message=FALSE, echo=FALSE}
+
+clinicaltraits <- sample_data(genus_glom)[sample_data(genus_glom)$Group == 2,c(4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22)]
+
+clinicaltraits <- data.frame(clinicaltraits)
+lms <- lapply(colnames(clinicaltraits), function(x) {
+  form <- paste0(x, " ~ as.factor(clinicaltraits$unWeiHieComplClu)")
+  lm(form, data= clinicaltraits)
+})
+
+p.traits1<-matrix(NA, nrow=dim(clinicaltraits)[2], ncol=1)
+row.names(p.traits1)<-colnames(clinicaltraits)
+p.traits1[,1] <- sapply(lms, function(x) {
+  pf(summary(x)$fstatistic[1],summary(x)$fstatistic[2],summary(x)$fstatistic[3],lower.tail=FALSE) 
+})
+
+library(ggplot2)
+
+# for(y in 1:21){ 
+#   x = 22
+#   plotAllBox(map4_numTraits)
+#   }
+
+p4 <- ggplot(clinicaltraits, aes(x=as.factor(unWeiHieComplClu), y = BSQ_Bloating))  + geom_boxplot() + geom_jitter()  +  ggtitle("bloating by cluster") +    theme(legend.position="none")   
+# p5 <- ggplot(mapping.new1, aes(x=as.factor(unWeiHieComplClu), y = ETI_Sexual_Score))  + geom_boxplot() + geom_jitter()  +  ggtitle("ETI_Sexual_Score by cluster") +    theme(legend.position="none")   
+p.traits1
+p4
+
+plot_bar(phy, x="unWeiHieComplClu", fill="Genus")
+
+```
+# microbiome miRNA correlations with colored clusters
+```{r}
+load("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/data/consistantData/biopsyMicrobiome/sigCorrMicroRNAMicrobDataFrame.Rda")
+library(ggplot2)
+ct <- sample_data(phy)[,c(1,22,23)]
+ct1 <- ct[row.names(ct)%in%row.names(data2),]
+ct1 <- ct1[row.names(data2),]
+match(row.names(ct1),row.names(data2))
+data3 <- cbind(data2,ct1)
+data3$cluCol <- ifelse(data3$unWeiHieComplClu==2,"black", ifelse(data3$unWeiHieComplClu==3,"green3","red" ))
+colnames(data3)[c(1,9)] <- c("P_distasonis", "hsa_miR_200a_3p")
+
+p <- ggplot(data3, aes(x=P_distasonis, y=hsa_miR_200a_3p)) 
+p + geom_point(aes(color = as.factor(data3$cluCol)), size=2.5) + scale_colour_manual(values = data3$cluCol) +  theme(legend.position="none")  +  geom_smooth(method='lm',se=FALSE)
+
+
+ggsave("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/miRNA_microbiome/biopsyMicrobiome/p_distasonis_200a_clusterColor.png", width = 16, height = 9, dpi = 120)
+
+
+p <- ggplot(data3, aes(x=P_distasonis, y=hsa_miR_200a_3p)) + geom_point(size = 2.5)  + theme(legend.position="none")
+p  +  geom_smooth(method='lm',se=FALSE)
+ggsave("C:/Users/swapnajoshi-admin/Documents/GIT_workspace/IBSmicrobiomeProject/IBSmicrobiomeAnalysisR/temp/miRNA_microbiome/biopsyMicrobiome/p_distasonis_200a_noColor.png", width = 16, height = 9, dpi = 120)
+
+```
+
+
+```{r}
+
+# microbes of interest 
+# Dorea
+# Ruminococcus
+# Clostridium sp
+# Bacteroidetes
+# Bifidobacterium
+# Fecalibacterium
+# methenogens
+
+
+
+```
+# F/B ratio IBS and HC separately
+```{r}
+# IBS
+phylum_glom<-tax_glom(phy, taxrank="Phylum")
+phylum_glom <- prune_samples(sample_data(phylum_glom)$Group == 1,phylum_glom)
+glomTax = tax_table(phylum_glom)[,"Phylum"]
+glomOTU = otu_table(phylum_glom)
+glomTable = merge(glomOTU,glomTax,by=0,all=TRUE)
+rownames(glomTable) = glomTable[,"Phylum"]
+glomTable$Row.names = NULL
+glomTable$Phylum = NULL
+
+# percentages rather than counts
+glomTable2 = glomTable / rep(colSums(glomTable), each = nrow(glomTable))
+glomTable3 = as.data.frame(t(glomTable2))
+colnames(glomTable3) <- gsub(" ","", colnames(glomTable3))
+glomTable3$unWeiHieComplClu <- sample_data(phylum_glom)$unWeiHieComplClu
+
+### bacteroidetes proteobacteria ratio
+glomTable3$bpRatio <-  glomTable3$p__Bacteroidetes/glomTable3$p__Proteobacteria
+summary(lm(glomTable3$bpRatio ~ as.factor(glomTable3$unWeiHieComplClu)))
+
+
+### bacteroidetes firmicutes ratio
+glomTable3$bfRatio <-  glomTable3$p__Bacteroidetes/glomTable3$p__Firmicutes
+summary(lm(glomTable3$bfRatio ~ as.factor(glomTable3$unWeiHieComplClu)))
+
+# average B/F ratio  = 2.103 in IBS; 
+# average B/F ratio  = 1.8 in IBS; 
+
+
+# glomTable3$Group <- sample_data(phylum_glom)$Group
+glomTable3$BH <- sample_data(phylum_glom)$BH
+# glomTable3$proteo <- ifelse(glomTable3$p__Proteobacteria>0.26,2,1)
+# glomTable3$FirmBac <- ifelse((glomTable3$p__Proteobacteria + glomTable3$p__Bacteroidetes)<0.80,2,1)
+
+ggplot(glomTable3,aes(p__Bacteroidetes , p__Firmicutes)) +   theme_bw() +  geom_point(size=2, color = glomTable3$proteo  )
+
+
+phylum_glom<-tax_glom(phy, taxrank="Phylum")
+phySub <- prune_taxa(names(sort(taxa_sums(phylum_glom), TRUE))[1:3], phylum_glom) 
+phySub1 <- prune_samples(sample_data(phySub)$Group==2,phySub) 
+plot_bar(phySub1, "Phylum", fill="as.factor(Phylum)", facet_grid=~as.factor(unWeiHieComplClu))
+
+phySub1 <- prune_samples(sample_data(phySub)$Group==1,phySub) 
+plot_bar(phySub1, "Phylum", fill="as.factor(Phylum)", facet_grid=~as.factor(unWeiHieComplClu))
+```
+
